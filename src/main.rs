@@ -10,9 +10,16 @@ mod app {
     use midi_msg::{self, MidiMsg, ReceiverContext};
     use teensy4_bsp::{
         self as bsp,
-        hal::lpuart::{Interrupts, Lpuart, Pins},
+        hal::{
+            gpio::Output,
+            lpuart::{Interrupts, Lpuart, Pins},
+        },
         pins::t40,
     };
+
+    const HEAP_SIZE: usize = 1024;
+    const MIDI_BUF_SIZE: usize = 32;
+    const MIDI_BAUD: u32 = 31250;
 
     #[global_allocator]
     static HEAP: Heap = Heap::empty();
@@ -32,11 +39,13 @@ mod app {
     struct Local {
         /// The LED on pin 13.
         led: board::Led,
+        led_midi_out: Output<t40::P12>,
         /// A poller to control USB logging.
         poller: logging::Poller,
-        midi_uart: Lpuart<Pins<t40::P14, t40::P15>, 2>,
+        midi_uart: Lpuart<Pins<t40::P1, t40::P0>, 6>,
         midi_ctx: ReceiverContext,
-        midi_buffer: Vec<u8, 64>,
+        midi_out_ctx: Option<u8>,
+        midi_buffer: Vec<u8, MIDI_BUF_SIZE>,
     }
 
     #[init]
@@ -45,33 +54,34 @@ mod app {
             mut gpio2,
             pins,
             usb,
-            lpuart2,
+            lpuart6,
             ..
         } = brd(cx.device);
 
         {
             use core::mem::MaybeUninit;
-            const HEAP_SIZE: usize = 1024;
             static mut HEAP_MEM: [MaybeUninit<u8>; HEAP_SIZE] = [MaybeUninit::uninit(); HEAP_SIZE];
             unsafe { HEAP.init(&raw mut HEAP_MEM as usize, HEAP_SIZE) }
         }
 
         let led = board::led(&mut gpio2, pins.p13);
         let poller = logging::log::usbd(usb, logging::Interrupts::Enabled).unwrap();
-        let mut midi_uart: board::Lpuart2 = board::Lpuart2::new(
-            lpuart2,
+        let mut midi_uart: board::Lpuart6 = board::Lpuart6::new(
+            lpuart6,
             Pins {
-                tx: pins.p14,
-                rx: pins.p15,
+                tx: pins.p1,
+                rx: pins.p0,
             },
         );
         midi_uart.disable(|uart| {
-            uart.set_baud(&board::lpuart_baud(31250));
+            uart.set_baud(&board::lpuart_baud(MIDI_BAUD));
             uart.set_interrupts(Interrupts::RECEIVE_FULL);
         });
 
         let midi_ctx = ReceiverContext::new();
         let midi_buffer = Vec::new();
+        let led_midi_out = gpio2.output(pins.p12);
+
         Systick::start(
             cx.core.SYST,
             board::ARM_FREQUENCY,
@@ -85,23 +95,23 @@ mod app {
                 midi_uart,
                 midi_ctx,
                 midi_buffer,
+                led_midi_out,
+                midi_out_ctx: None,
             },
         )
     }
 
-    #[task(binds = LPUART2, local = [midi_uart, midi_ctx, midi_buffer])]
+    #[task(binds = LPUART6, local = [midi_uart, midi_ctx, midi_buffer, led_midi_out, midi_out_ctx])]
     fn midi_handler(cx: midi_handler::Context) {
         let uart = cx.local.midi_uart;
         let ctx = cx.local.midi_ctx;
         let buffer = cx.local.midi_buffer;
+        let led_midi_out = cx.local.led_midi_out;
+        let tx_ctx = cx.local.midi_out_ctx;
 
-        let mut cnt = 0;
         while let Ok(Some(byte)) = uart.try_read() {
             buffer.push(byte).ok();
-            cnt += 1;
         }
-
-        log::info!("Done reading : {:?} bytes", cnt);
 
         let mut consumed = 0;
         loop {
@@ -114,6 +124,33 @@ mod app {
                 Ok((msg, len)) => {
                     blink_led::spawn().ok();
                     log::info!("Received: {:?}", msg);
+
+                    // TODO: simplify into one method.
+
+                    led_midi_out.set();
+
+                    let to_send = msg.to_midi();
+                    let is_channel_msg = msg.is_channel_mode();
+                    let status = to_send[0];
+
+                    if is_channel_msg && *tx_ctx == Some(status) {
+                        for &byte in &to_send[1..] {
+                            while !uart.try_write(byte) {
+                                core::hint::spin_loop();
+                            }
+                        }
+                    } else {
+                        for byte in msg.to_midi() {
+                            while !uart.try_write(byte) {
+                                core::hint::spin_loop();
+                            }
+                        }
+                        if is_channel_msg {
+                            *tx_ctx = Some(status);
+                        }
+                    }
+                    led_midi_out.clear();
+
                     consumed += len;
                 }
                 Err(midi_msg::ParseError::UnexpectedEnd) => {
