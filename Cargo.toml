@@ -15,7 +15,7 @@ teensy4-panic = { version = "0.2", features = ["log"] }
 midi-msg = { version = "0.8", default-features = false }
 embedded-alloc = "0.6.0"
 
-heapless = "0.8.0"
+heapless = "0.9.1"
 
 [dependencies.teensy4-bsp]
 version = "0.5"

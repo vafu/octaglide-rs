@@ -6,7 +6,8 @@ mod app {
     use board::t40 as brd;
     use embedded_alloc::LlffHeap as Heap;
     use imxrt_log as logging;
-    use midi_msg::MidiMsg;
+    use log::warn;
+    use midi_msg::{MidiMsg, ParseError};
     use teensy4_bsp::{
         board,
         hal::{
@@ -92,16 +93,22 @@ mod app {
     #[task(binds = LPUART6, shared = [midi_bus])]
     fn midi_handler(mut cx: midi_handler::Context) {
         cx.shared.midi_bus.lock(|midi| {
-            midi.read(|_, msg| {
+            midi.read(|msg| {
                 process_midi::spawn(msg).ok();
             });
         });
     }
 
     #[task(shared = [midi_bus], local = [led])]
-    async fn process_midi(mut cx: process_midi::Context, msg: MidiMsg) {
-        cx.shared.midi_bus.lock(|midi| {
-            midi.write(&msg);
+    async fn process_midi(mut cx: process_midi::Context, msg: Result<MidiMsg, ParseError>) {
+        cx.shared.midi_bus.lock(|midi| match msg {
+            Ok(msg) => {
+                log::info!("Received: {:?}", msg);
+                midi.write(&msg);
+            }
+            Err(e) => {
+                warn!("Midi error, {:?}", e);
+            }
         });
     }
 
