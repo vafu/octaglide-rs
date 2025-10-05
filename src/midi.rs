@@ -32,11 +32,11 @@ impl MidiBus {
         }
 
         loop {
-            self.buf.make_contiguous();
-            let slice = self.buf.as_slices().0;
-            if slice.is_empty() {
+            if self.buf.is_empty() {
                 break;
             }
+            self.buf.make_contiguous();
+            let slice = self.buf.as_slices().0;
 
             match MidiMsg::from_midi_with_context(slice, &mut self.rx_ctx) {
                 Ok((msg, len)) => {
