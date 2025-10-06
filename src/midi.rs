@@ -7,11 +7,7 @@ use crate::app::MidiUart;
 // TODO: consider changing midi BAUD (elektron Turbo), might need to update buf size.
 const MIDI_BUF_SIZE: usize = 8;
 
-pub trait MidiHandler {
-    fn on_message(&self, msg: Result<MidiMsg, ParseError>);
-}
-
-pub struct MidiBus<H: MidiHandler> {
+pub struct MidiBus {
     uart: MidiUart,
 
     tx_ctx: Option<u8>,
@@ -20,11 +16,11 @@ pub struct MidiBus<H: MidiHandler> {
     rx_ctx: ReceiverContext,
     rx_buf: Deque<u8, MIDI_BUF_SIZE>,
 
-    on_message: H,
+    on_message: fn(Result<MidiMsg, ParseError>),
 }
 
-impl<H: MidiHandler> MidiBus<H> {
-    pub fn new(uart: MidiUart, on_message: H) -> Self {
+impl MidiBus {
+    pub fn new(uart: MidiUart, on_message: fn(Result<MidiMsg, ParseError>)) -> Self {
         Self {
             uart,
             on_message,
@@ -51,7 +47,7 @@ impl<H: MidiHandler> MidiBus<H> {
 
                 match MidiMsg::from_midi_with_context(slice, &mut self.rx_ctx) {
                     Ok((msg, len)) => {
-                        self.on_message.on_message(Ok(msg));
+                        (self.on_message)(Ok(msg));
                         self.drain_rx_queue(len);
                     }
 
@@ -60,7 +56,7 @@ impl<H: MidiHandler> MidiBus<H> {
                     }
 
                     Err(e) => {
-                        self.on_message.on_message(Err(e));
+                        (self.on_message)(Err(e));
                         self.drain_rx_queue(1);
                     }
                 }

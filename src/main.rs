@@ -8,11 +8,11 @@ mod processor;
 
 #[rtic::app(device = teensy4_bsp, peripherals = true, dispatchers = [KPP])]
 mod app {
+
     use crate::{midi::MidiBus, processor::Engine};
     use board::t40 as brd;
     use embedded_alloc::LlffHeap as Heap;
     use imxrt_log as logging;
-    use log::warn;
     use midi_msg::{MidiMsg, ParseError};
     use teensy4_bsp::{
         board,
@@ -35,7 +35,7 @@ mod app {
 
     #[shared]
     struct Shared {
-        midi_bus: MidiBus<Engine>,
+        midi_bus: MidiBus,
     }
 
     #[local]
@@ -43,6 +43,7 @@ mod app {
         led: board::Led,
         // led_midi_out: Output<pins::P12>,
         poller: logging::Poller,
+        engine: Engine,
     }
 
     #[global_allocator]
@@ -68,18 +69,20 @@ mod app {
             board::ARM_FREQUENCY,
             rtic_monotonics::create_systick_token!(),
         );
-        let engine = Engine::new(|msg| {
-            process_midi::spawn(Ok(msg)).unwrap();
-        });
 
         (
             Shared {
-                midi_bus: MidiBus::new(prepare_uart(lpuart6, pins.p1, pins.p0), engine),
+                midi_bus: MidiBus::new(prepare_uart(lpuart6, pins.p1, pins.p0), |res| {
+                    process_message::spawn(res).unwrap();
+                }),
             },
             Local {
                 led: board::led(&mut gpio2, pins.p13),
                 // led_midi_out: gpio2.output(pins.p12),
                 poller: logging::log::usbd(usb, logging::Interrupts::Enabled).unwrap(),
+                engine: Engine::new(|msg| {
+                    send_message::spawn(msg).unwrap();
+                }),
             },
         )
     }
@@ -102,22 +105,17 @@ mod app {
 
     #[task(binds = LPUART6, shared = [midi_bus])]
     fn midi_handler(mut cx: midi_handler::Context) {
-        cx.shared.midi_bus.lock(|midi| {
-            midi.handle_interrupt();
-        });
+        cx.shared.midi_bus.lock(|midi| midi.handle_interrupt());
     }
 
-    #[task(shared = [midi_bus], local = [led])]
-    async fn process_midi(mut cx: process_midi::Context, msg: Result<MidiMsg, ParseError>) {
-        cx.shared.midi_bus.lock(|midi| match msg {
-            Ok(msg) => {
-                log::info!("Received: {:?}", msg);
-                midi.send(msg);
-            }
-            Err(e) => {
-                warn!("Midi error, {:?}", e);
-            }
-        });
+    #[task(shared = [midi_bus])]
+    async fn send_message(mut cx: send_message::Context, msg: MidiMsg) {
+        cx.shared.midi_bus.lock(|midi| midi.send(msg));
+    }
+
+    #[task(local = [engine])]
+    async fn process_message(cx: process_message::Context, msg: Result<MidiMsg, ParseError>) {
+        cx.local.engine.on_message(msg).await;
     }
 
     #[task(binds = USB_OTG1, local = [poller])]
