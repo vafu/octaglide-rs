@@ -1,8 +1,14 @@
 #![no_std]
 #![no_main]
+
+use teensy4_panic as _;
+
+mod midi;
+mod processor;
+
 #[rtic::app(device = teensy4_bsp, peripherals = true, dispatchers = [KPP])]
 mod app {
-    use crate::midi::MidiBus;
+    use crate::{midi::MidiBus, processor::Engine};
     use board::t40 as brd;
     use embedded_alloc::LlffHeap as Heap;
     use imxrt_log as logging;
@@ -11,7 +17,7 @@ mod app {
     use teensy4_bsp::{
         board,
         hal::{
-            gpio::Output,
+            // gpio::Output,
             iomuxc::{
                 consts::Const,
                 lpuart::{self, Pin, Rx, Tx},
@@ -29,13 +35,13 @@ mod app {
 
     #[shared]
     struct Shared {
-        midi_bus: MidiBus,
+        midi_bus: MidiBus<Engine>,
     }
 
     #[local]
     struct Local {
         led: board::Led,
-        led_midi_out: Output<pins::P12>,
+        // led_midi_out: Output<pins::P12>,
         poller: logging::Poller,
     }
 
@@ -62,13 +68,17 @@ mod app {
             board::ARM_FREQUENCY,
             rtic_monotonics::create_systick_token!(),
         );
+        let engine = Engine::new(|msg| {
+            process_midi::spawn(Ok(msg)).unwrap();
+        });
+
         (
             Shared {
-                midi_bus: MidiBus::new(prepare_uart(lpuart6, pins.p1, pins.p0)),
+                midi_bus: MidiBus::new(prepare_uart(lpuart6, pins.p1, pins.p0), engine),
             },
             Local {
                 led: board::led(&mut gpio2, pins.p13),
-                led_midi_out: gpio2.output(pins.p12),
+                // led_midi_out: gpio2.output(pins.p12),
                 poller: logging::log::usbd(usb, logging::Interrupts::Enabled).unwrap(),
             },
         )
@@ -93,9 +103,7 @@ mod app {
     #[task(binds = LPUART6, shared = [midi_bus])]
     fn midi_handler(mut cx: midi_handler::Context) {
         cx.shared.midi_bus.lock(|midi| {
-            midi.read(|msg| {
-                process_midi::spawn(msg).ok();
-            });
+            midi.handle_interrupt();
         });
     }
 
@@ -104,7 +112,7 @@ mod app {
         cx.shared.midi_bus.lock(|midi| match msg {
             Ok(msg) => {
                 log::info!("Received: {:?}", msg);
-                midi.write(&msg);
+                midi.send(msg);
             }
             Err(e) => {
                 warn!("Midi error, {:?}", e);
@@ -117,6 +125,3 @@ mod app {
         cx.local.poller.poll();
     }
 }
-
-use teensy4_panic as _;
-mod midi;
