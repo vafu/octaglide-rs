@@ -2,24 +2,8 @@ use midi_msg::{ChannelVoiceMsg, ControlChange, MidiMsg};
 
 const OCTAVE_OFFSET: i8 = 12;
 
-pub enum MidiProcessors {
-    OctaveShifter(OctaveShifter),
-    Identity,
-    Choke,
-}
-
 pub trait MidiProcessor {
     fn process(&mut self, msg: MidiMsg) -> Option<MidiMsg>;
-}
-
-impl MidiProcessor for MidiProcessors {
-    fn process(&mut self, msg: MidiMsg) -> Option<MidiMsg> {
-        match self {
-            MidiProcessors::OctaveShifter(octave_shifter) => octave_shifter.process(msg),
-            MidiProcessors::Identity => Some(msg),
-            MidiProcessors::Choke => None,
-        }
-    }
 }
 
 pub struct OctaveShifter {
