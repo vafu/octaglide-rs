@@ -1,22 +1,18 @@
-use heapless::Vec;
+use alloc::{boxed::Box, vec::Vec};
 use log::info;
 use midi_msg::MidiMsg;
 
-use crate::processor::{MidiProcessor, MidiProcessors, OctaveShifter};
-
-const PROCESSOR_COUNT: usize = 2;
+use crate::processor::{MidiProcessor, OctaveShifter};
 
 pub struct Engine {
     send_midi: fn(MidiMsg),
-    processors: Vec<MidiProcessors, PROCESSOR_COUNT>,
+    processors: Vec<Box<dyn MidiProcessor>>,
 }
 
 impl Engine {
     pub fn new(send_midi: fn(MidiMsg)) -> Self {
-        let mut processors = Vec::new();
-        processors
-            .push(MidiProcessors::OctaveShifter(OctaveShifter::new()))
-            .ok();
+        let mut processors: Vec<Box<dyn MidiProcessor>> = Vec::new();
+        processors.push(Box::new(OctaveShifter::new()));
         Engine {
             send_midi,
             processors,

@@ -6,6 +6,7 @@ use teensy4_panic as _;
 mod engine;
 mod midi;
 mod processor;
+extern crate alloc;
 
 #[rtic::app(device = teensy4_bsp, peripherals = true, dispatchers = [KPP])]
 mod app {
