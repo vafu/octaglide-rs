@@ -12,7 +12,10 @@ impl Engine {
 
     pub async fn on_message(&self, msg: Result<MidiMsg, midi_msg::ParseError>) {
         match msg {
-            Ok(msg) => (self.send_midi)(msg),
+            Ok(msg) => {
+                info!("Received {:?}", msg);
+                (self.send_midi)(msg)
+            }
             Err(e) => info!("Midi: {:?}", e),
         }
     }
