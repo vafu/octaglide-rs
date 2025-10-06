@@ -14,6 +14,7 @@ log = { version = "0.4", features = ["max_level_debug", "release_max_level_info"
 teensy4-panic = { version = "0.2", features = ["log"] }
 midi-msg = { version = "0.8", default-features = false }
 embedded-alloc = "0.6.0"
+cortex-m = "0.7.7"
 
 heapless = "0.9.1"
 

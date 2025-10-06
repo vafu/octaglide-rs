@@ -3,7 +3,7 @@
 
 use teensy4_panic as _;
 
-mod engine;
+mod core;
 mod midi;
 mod processor;
 extern crate alloc;
@@ -11,11 +11,15 @@ extern crate alloc;
 #[rtic::app(device = teensy4_bsp, peripherals = true, dispatchers = [KPP])]
 mod app {
 
-    use crate::{engine::Engine, midi::MidiBus};
+    use crate::{
+        core::{Core, Input as CoreIn, Output as CoreOut},
+        midi::MidiBus,
+    };
     use board::t40 as brd;
     use embedded_alloc::LlffHeap as Heap;
     use imxrt_log as logging;
-    use midi_msg::{MidiMsg, ParseError};
+    use midi_msg::MidiMsg;
+    use rtic_monotonics::systick::{Systick, *};
     use teensy4_bsp::{
         board,
         hal::{
@@ -43,9 +47,8 @@ mod app {
     #[local]
     struct Local {
         led: board::Led,
-        // led_midi_out: Output<pins::P12>,
         poller: logging::Poller,
-        engine: Engine,
+        engine: Core,
     }
 
     #[global_allocator]
@@ -75,19 +78,35 @@ mod app {
         (
             Shared {
                 midi_bus: MidiBus::new(prepare_uart(lpuart6, pins.p1, pins.p0), |res| {
-                    process_message::spawn(res).unwrap();
+                    process_input::spawn(CoreIn::ProcessMidi(res)).unwrap();
                 }),
             },
             Local {
                 led: board::led(&mut gpio2, pins.p13),
-                // led_midi_out: gpio2.output(pins.p12),
                 poller: logging::log::usbd(usb, logging::Interrupts::Enabled).unwrap(),
-                engine: Engine::new(|msg| {
-                    send_message::spawn(msg).unwrap();
-                }),
+                engine: Core::new(dispatch_output),
             },
         )
     }
+
+    #[idle]
+    fn idle(_: idle::Context) -> ! {
+        loop {
+            cortex_m::asm::wfi();
+        }
+    }
+
+    fn dispatch_output(output: CoreOut) {
+        match output {
+            CoreOut::SendMidi(msg) => {
+                send_message::spawn(msg).unwrap();
+            }
+            CoreOut::BlinkLed => {
+                blink_led::spawn().ok();
+            }
+        }
+    }
+
     fn prepare_uart<const N: u8, TX, RX>(
         instance: Instance<N>,
         tx: TX,
@@ -105,19 +124,28 @@ mod app {
         midi_uart
     }
 
-    #[task(binds = LPUART6, shared = [midi_bus])]
+    // TODO: figure out priorities
+    #[task(binds = LPUART6, shared = [midi_bus], priority = 1)]
     fn midi_handler(mut cx: midi_handler::Context) {
         cx.shared.midi_bus.lock(|midi| midi.handle_interrupt());
     }
 
-    #[task(shared = [midi_bus])]
+    #[task(shared = [midi_bus], priority = 1)]
     async fn send_message(mut cx: send_message::Context, msg: MidiMsg) {
         cx.shared.midi_bus.lock(|midi| midi.send(msg));
     }
 
-    #[task(local = [engine])]
-    async fn process_message(cx: process_message::Context, msg: Result<MidiMsg, ParseError>) {
-        cx.local.engine.on_message(msg).await;
+    #[task(local = [engine], priority = 1)]
+    async fn process_input(cx: process_input::Context, input: CoreIn) {
+        cx.local.engine.process(input).await;
+    }
+
+    #[task(local = [led], priority = 1)]
+    async fn blink_led(cx: blink_led::Context) {
+        let led = cx.local.led;
+        led.set();
+        Systick::delay(1.millis()).await;
+        led.clear();
     }
 
     #[task(binds = USB_OTG1, local = [poller])]
