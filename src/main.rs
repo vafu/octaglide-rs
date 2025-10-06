@@ -3,13 +3,14 @@
 
 use teensy4_panic as _;
 
+mod engine;
 mod midi;
 mod processor;
 
 #[rtic::app(device = teensy4_bsp, peripherals = true, dispatchers = [KPP])]
 mod app {
 
-    use crate::{midi::MidiBus, processor::Engine};
+    use crate::{engine::Engine, midi::MidiBus};
     use board::t40 as brd;
     use embedded_alloc::LlffHeap as Heap;
     use imxrt_log as logging;
