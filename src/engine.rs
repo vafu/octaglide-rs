@@ -1,18 +1,25 @@
+use heapless::Vec;
 use log::info;
 use midi_msg::MidiMsg;
 
-use crate::processor::{MidiProcessor, OctaveShifter};
+use crate::processor::{MidiProcessor, MidiProcessors, OctaveShifter};
+
+const PROCESSOR_COUNT: usize = 2;
 
 pub struct Engine {
     send_midi: fn(MidiMsg),
-    shifter: OctaveShifter,
+    processors: Vec<MidiProcessors, PROCESSOR_COUNT>,
 }
 
 impl Engine {
     pub fn new(send_midi: fn(MidiMsg)) -> Self {
+        let mut processors = Vec::new();
+        processors
+            .push(MidiProcessors::OctaveShifter(OctaveShifter::new()))
+            .ok();
         Engine {
             send_midi,
-            shifter: OctaveShifter::new(),
+            processors,
         }
     }
 
@@ -20,9 +27,14 @@ impl Engine {
         match msg {
             Ok(msg) => {
                 info!("Received {:?}", msg);
-                match self.shifter.process(msg) {
-                    Some(message) => (self.send_midi)(message),
-                    None => info!("Consumed"),
+
+                let final_msg = self
+                    .processors
+                    .iter_mut()
+                    .try_fold(msg, |m, p| p.process(m));
+
+                if let Some(midi_msg) = final_msg {
+                    (self.send_midi)(midi_msg)
                 }
             }
             Err(e) => info!("Midi: {:?}", e),
