@@ -15,17 +15,20 @@ teensy4-panic = { version = "0.2", features = ["log"] }
 midi-msg = { version = "0.8", default-features = false }
 embedded-alloc = "0.6.0"
 cortex-m = "0.7.7"
-
 heapless = "0.9.1"
 
 [dependencies.teensy4-bsp]
 version = "0.5"
-features = [
-    # Use the BSP's runtime.
-    "rt",
-]
+features = ["rt"]
 
 # Don't optimize build dependencies, like proc macros.
 # Helps with build times.
 [profile.release.build-override]
 opt-level = 0
+
+[[bin]]
+name = "octaglide-rs"
+path = "src/main.rs"
+test = false
+doctest = false
+bench = false
