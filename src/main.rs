@@ -6,6 +6,8 @@ use teensy4_panic as _;
 mod core;
 mod midi;
 mod processor;
+
+#[macro_use]
 extern crate alloc;
 
 #[rtic::app(device = teensy4_bsp, peripherals = true, dispatchers = [KPP])]
@@ -116,7 +118,7 @@ mod app {
         TX: Pin<Direction = Tx, Module = Const<N>>,
         RX: lpuart::Pin<Direction = Rx, Module = Const<N>>,
     {
-        let mut midi_uart = Lpuart::new(instance, Pins { tx: tx, rx: rx });
+        let mut midi_uart = Lpuart::new(instance, Pins { tx, rx });
         midi_uart.disable(|uart| {
             uart.set_baud(&board::lpuart_baud(MIDI_BAUD));
             uart.set_interrupts(Interrupts::RECEIVE_FULL);

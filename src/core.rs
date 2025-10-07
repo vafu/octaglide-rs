@@ -22,8 +22,7 @@ pub enum Output {
 
 impl Core {
     pub fn new(output: fn(Output)) -> Self {
-        let mut processors: Vec<Box<dyn MidiProcessor>> = Vec::new();
-        processors.push(Box::new(OctaveShifter::new()));
+        let processors: Vec<Box<dyn MidiProcessor>> = vec![Box::new(OctaveShifter::new())];
         Core { output, processors }
     }
 
