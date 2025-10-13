@@ -1,9 +1,10 @@
 use alloc::{boxed::Box, vec::Vec};
 use log::info;
-use midi_msg::{MidiMsg, ParseError};
+use midi_msg::{ChannelVoiceMsg, ControlChange, MidiMsg, ParseError};
 
 use crate::{
     app::Dispatcher,
+    engine::EngineMessage,
     processor::{MidiProcessor, OctaveShifter},
 };
 
@@ -20,8 +21,8 @@ pub enum Input {
 #[derive(Debug)]
 pub enum Output {
     SendMidi(MidiMsg),
+    Engine(EngineMessage),
     BlinkLed,
-    Slide(MidiMsg),
 }
 
 impl Core {
@@ -55,7 +56,57 @@ impl Core {
                     .try_fold(msg, |m, p| p.process(m));
 
                 if let Some(midi_msg) = final_msg {
+                    let start_glide = matches!(
+                        &midi_msg,
+                        MidiMsg::ChannelVoice {
+                            msg: ChannelVoiceMsg::NoteOn { .. },
+                            ..
+                        }
+                    );
+                    let stop_glide = matches!(
+                        &midi_msg,
+                        MidiMsg::ChannelVoice {
+                            msg: ChannelVoiceMsg::NoteOff { .. },
+                            ..
+                        }
+                    );
+                    if let MidiMsg::ChannelVoice {
+                        msg:
+                            ChannelVoiceMsg::ControlChange {
+                                control: ControlChange::CC { control: 13, value },
+                            },
+                        ..
+                    } = midi_msg
+                    {
+                        self.dispatcher
+                            .dispatch(Output::Engine(EngineMessage::Duration(
+                                value as u32 * 1000 / 127,
+                            )))
+                            .await;
+                    }
+                    if let MidiMsg::ChannelVoice {
+                        msg:
+                            ChannelVoiceMsg::ControlChange {
+                                control: ControlChange::CC { control: 14, value },
+                            },
+                        ..
+                    } = midi_msg
+                    {
+                        self.dispatcher
+                            .dispatch(Output::Engine(EngineMessage::Looping(value > 127 / 2)))
+                            .await;
+                    }
                     self.dispatcher.dispatch(Output::SendMidi(midi_msg)).await;
+                    if start_glide {
+                        self.dispatcher
+                            .dispatch(Output::Engine(EngineMessage::Start))
+                            .await;
+                    }
+                    if stop_glide {
+                        self.dispatcher
+                            .dispatch(Output::Engine(EngineMessage::Stop))
+                            .await;
+                    }
                     self.dispatcher.dispatch(Output::BlinkLed).await;
                 }
             }

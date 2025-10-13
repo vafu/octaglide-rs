@@ -1,9 +1,29 @@
 #![no_std]
 #![no_main]
 
-use teensy4_panic as _;
+use ::core::panic::PanicInfo;
+
+use cortex_m::interrupt;
+
+#[panic_handler]
+#[allow(static_mut_refs)]
+fn panic(info: &PanicInfo) -> ! {
+    cortex_m::interrupt::disable();
+    log::error!("{}", info);
+    unsafe {
+        if let Some(poller) = app::POLLER.as_mut() {
+            for _ in 0..5000 {
+                poller.poll();
+                cortex_m::asm::delay(10000);
+            }
+        }
+    }
+
+    teensy4_panic::sos()
+}
 
 mod core;
+mod engine;
 mod midi;
 mod processor;
 
@@ -15,18 +35,14 @@ mod app {
 
     use crate::{
         core::{Core, Input as CoreIn, Output as CoreOut},
+        engine::{Engine, EngineMessage},
         midi::MidiBus,
     };
     use board::t40 as brd;
     use embedded_alloc::LlffHeap as Heap;
-    use futures::FutureExt;
     use imxrt_log as logging;
-    use log::info;
-    use midi_msg::{Channel, ChannelVoiceMsg, ControlChange, MidiMsg};
-    use rtic_monotonics::{
-        Monotonic,
-        systick::{Systick, *},
-    };
+    use midi_msg::{Channel, MidiMsg};
+    use rtic_monotonics::systick::{Systick, *};
     use rtic_sync::{
         channel::{Receiver, Sender},
         make_channel,
@@ -50,6 +66,8 @@ mod app {
     const MIDI_BAUD: u32 = 31250;
     const MIDI_CHANNEL_CAPACITY: usize = 16;
 
+    pub(crate) static mut POLLER: Option<logging::Poller> = None;
+
     #[shared]
     struct Shared {
         midi_bus: MidiBus,
@@ -58,27 +76,27 @@ mod app {
     #[local]
     struct Local {
         led: board::Led,
-        poller: logging::Poller,
+        // poller: logging::Poller,
         engine: Core,
     }
 
     pub struct Dispatcher {
         midi_sender: Sender<'static, MidiMsg, MIDI_CHANNEL_CAPACITY>,
-        slide_sender: Sender<'static, MidiMsg, 1>,
+        engine_sender: Sender<'static, EngineMessage, 1>,
     }
 
     impl Dispatcher {
         pub async fn dispatch(&mut self, output: CoreOut) {
             match output {
                 CoreOut::SendMidi(msg) => {
-                    // TODO: Clone, meh
                     self.midi_sender.send(msg.clone()).await.unwrap();
-                    self.slide_sender.send(msg).await.unwrap();
                 }
                 CoreOut::BlinkLed => {
                     blink_led::spawn().ok();
                 }
-                CoreOut::Slide(_) => {}
+                CoreOut::Engine(message) => {
+                    self.engine_sender.send(message).await.unwrap();
+                }
             }
         }
     }
@@ -106,16 +124,21 @@ mod app {
             board::ARM_FREQUENCY,
             rtic_monotonics::create_systick_token!(),
         );
+        let poller = logging::log::usbd(usb, logging::Interrupts::Enabled).unwrap();
+        crate::interrupt::free(|_| unsafe {
+            POLLER = Some(poller);
+        });
+
         let (s, r) = make_channel!(MidiMsg, MIDI_CHANNEL_CAPACITY);
-        let (ss, sr) = make_channel!(MidiMsg, 1);
+        let (engine, es) = Engine::new(Channel::Ch6, 13);
 
         let dispatcher = Dispatcher {
             midi_sender: s,
-            slide_sender: ss,
+            engine_sender: es,
         };
 
         midi_dispatch::spawn(r).unwrap();
-        slide::spawn(sr).unwrap();
+        animate::spawn(engine).unwrap();
 
         (
             Shared {
@@ -125,7 +148,6 @@ mod app {
             },
             Local {
                 led: board::led(&mut gpio2, pins.p13),
-                poller: logging::log::usbd(usb, logging::Interrupts::Enabled).unwrap(),
                 engine: Core::new(dispatcher),
             },
         )
@@ -173,82 +195,11 @@ mod app {
         }
     }
     #[task(shared = [midi_bus], priority = 2)]
-    async fn slide(mut ctx: slide::Context, mut r: Receiver<'static, MidiMsg, 1>) -> ! {
-        let mut GLIDE_DURATION_MS: u32 = 100;
-        const GLIDE_STEPS: u32 = 32;
-        const PITCH_BEND_CENTER: u32 = 8192;
-
-        let mut ch = Channel::Ch1;
-        let mut start_time = Systick::now();
-        let mut step = 0;
-
-        'reset: loop {
-            if step == 0 {
-                match r.recv().await {
-                    Ok(MidiMsg::ChannelVoice {
-                        channel,
-                        msg: ChannelVoiceMsg::NoteOn { .. },
-                    }) => {
-                        ch = channel;
-                        start_time = Systick::now();
-                        info!("start {}", start_time);
-                    }
-                    Ok(MidiMsg::ChannelVoice {
-                        msg:
-                            ChannelVoiceMsg::ControlChange {
-                                control: ControlChange::CC { control: 13, value },
-                            },
-                        ..
-                    }) => {
-                        GLIDE_DURATION_MS = value as u32 * 10000 / 127;
-                        continue 'reset;
-                    }
-                    _ => continue 'reset,
-                }
+    async fn animate(mut ctx: animate::Context, mut engine: Engine) -> ! {
+        loop {
+            if let Some(msg) = engine.tick().await {
+                ctx.shared.midi_bus.lock(|bus| bus.send(&msg));
             }
-
-            if GLIDE_DURATION_MS == 0 {
-                continue 'reset;
-            }
-
-            let next_step_time = start_time + ((step * GLIDE_DURATION_MS) / GLIDE_STEPS).millis();
-            info!("nextstep {}", next_step_time);
-            futures::select_biased! {
-                                      msg = r.recv().fuse() => match  msg {
-                                      Ok(MidiMsg::ChannelVoice { channel, msg: ChannelVoiceMsg::NoteOn {..}}) => {
-                                          ch = channel;
-                                          start_time = Systick::now();
-                                          step = 0;
-                                          continue 'reset;
-                                      },
-                        Ok(MidiMsg::ChannelVoice {
-                                              msg:
-                                                  ChannelVoiceMsg::ControlChange {
-                                                      control: ControlChange::CC { control: 13, value },
-                                                  },
-                                              ..
-                                          }) => {
-            GLIDE_DURATION_MS = value as u32 * 10000 / 127;
-                                    continue 'reset;
-
-                                },
-                                          _ => {}
-                                      },
-
-                                      _ = Systick::delay_until(next_step_time).fuse() => {
-                                          if step == GLIDE_STEPS {
-                                              step = 0;
-                                              continue 'reset;
-                                          }
-                                          step += 1;
-                                          let bend_value = ((step as u64 * PITCH_BEND_CENTER as u64) / GLIDE_STEPS as u64) as u16;
-                                          let bend_msg = MidiMsg::ChannelVoice {
-                                              channel: ch,
-                                              msg: ChannelVoiceMsg::PitchBend { bend: bend_value },
-                                          };
-                                          ctx.shared.midi_bus.lock(|bus| bus.send(&bend_msg));
-                                      }
-                                  }
         }
     }
 
@@ -265,8 +216,15 @@ mod app {
         led.clear();
     }
 
-    #[task(binds = USB_OTG1, local = [poller], priority = 2)]
+    #[task(binds = USB_OTG1, priority = 2)]
+    #[allow(static_mut_refs)]
     fn log_over_usb(cx: log_over_usb::Context) {
-        cx.local.poller.poll();
+        unsafe {
+            crate::interrupt::free(|_| {
+                if let Some(p) = POLLER.as_mut() {
+                    p.poll();
+                }
+            });
+        }
     }
 }

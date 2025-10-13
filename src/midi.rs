@@ -6,7 +6,7 @@ use teensy4_bsp::{hal::lpuart::Status, ral};
 use crate::app::MidiUart;
 
 // TODO: consider changing midi BAUD (elektron Turbo), might need to update buf size.
-const MIDI_BUF_SIZE: usize = 8;
+const MIDI_BUF_SIZE: usize = 128;
 
 pub struct MidiBus {
     uart: MidiUart,
@@ -93,7 +93,9 @@ impl MidiBus {
 
     fn write_bytes(&mut self, bytes: &[u8]) {
         for &byte in bytes {
-            self.tx_buf.push_back(byte).unwrap();
+            if let Err(e) = self.tx_buf.push_back(byte) {
+                log::error!("error pushing bytes {:?}", e)
+            }
         }
         if !self.tx_buf.is_empty() {
             unsafe {
