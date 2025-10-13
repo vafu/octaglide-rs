@@ -35,3 +35,8 @@ path = "src/main.rs"
 test = false
 doctest = false
 bench = false
+
+[profile.dev]
+opt-level = "z"     # Optimize for size
+debug = true        # Keep debug symbols
+lto = "thin"        # Enable Link Time Optimization
