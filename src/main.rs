@@ -10,7 +10,7 @@ mod processor;
 #[macro_use]
 extern crate alloc;
 
-#[rtic::app(device = teensy4_bsp, peripherals = true, dispatchers = [KPP])]
+#[rtic::app(device = teensy4_bsp, peripherals = true, dispatchers = [KPP, GPT1])]
 mod app {
 
     use crate::{
@@ -19,13 +19,21 @@ mod app {
     };
     use board::t40 as brd;
     use embedded_alloc::LlffHeap as Heap;
+    use futures::FutureExt;
     use imxrt_log as logging;
-    use midi_msg::MidiMsg;
-    use rtic_monotonics::systick::{Systick, *};
+    use log::info;
+    use midi_msg::{Channel, ChannelVoiceMsg, ControlChange, MidiMsg};
+    use rtic_monotonics::{
+        Monotonic,
+        systick::{Systick, *},
+    };
+    use rtic_sync::{
+        channel::{Receiver, Sender},
+        make_channel,
+    };
     use teensy4_bsp::{
         board,
         hal::{
-            // gpio::Output,
             iomuxc::{
                 consts::Const,
                 lpuart::{self, Pin, Rx, Tx},
@@ -40,6 +48,7 @@ mod app {
 
     const HEAP_SIZE: usize = 1024;
     const MIDI_BAUD: u32 = 31250;
+    const MIDI_CHANNEL_CAPACITY: usize = 16;
 
     #[shared]
     struct Shared {
@@ -51,6 +60,27 @@ mod app {
         led: board::Led,
         poller: logging::Poller,
         engine: Core,
+    }
+
+    pub struct Dispatcher {
+        midi_sender: Sender<'static, MidiMsg, MIDI_CHANNEL_CAPACITY>,
+        slide_sender: Sender<'static, MidiMsg, 1>,
+    }
+
+    impl Dispatcher {
+        pub async fn dispatch(&mut self, output: CoreOut) {
+            match output {
+                CoreOut::SendMidi(msg) => {
+                    // TODO: Clone, meh
+                    self.midi_sender.send(msg.clone()).await.unwrap();
+                    self.slide_sender.send(msg).await.unwrap();
+                }
+                CoreOut::BlinkLed => {
+                    blink_led::spawn().ok();
+                }
+                CoreOut::Slide(_) => {}
+            }
+        }
     }
 
     #[global_allocator]
@@ -71,11 +101,21 @@ mod app {
             ..
         } = brd(cx.device);
         init_heap();
-        rtic_monotonics::systick::Systick::start(
+        Systick::start(
             cx.core.SYST,
             board::ARM_FREQUENCY,
             rtic_monotonics::create_systick_token!(),
         );
+        let (s, r) = make_channel!(MidiMsg, MIDI_CHANNEL_CAPACITY);
+        let (ss, sr) = make_channel!(MidiMsg, 1);
+
+        let dispatcher = Dispatcher {
+            midi_sender: s,
+            slide_sender: ss,
+        };
+
+        midi_dispatch::spawn(r).unwrap();
+        slide::spawn(sr).unwrap();
 
         (
             Shared {
@@ -86,7 +126,7 @@ mod app {
             Local {
                 led: board::led(&mut gpio2, pins.p13),
                 poller: logging::log::usbd(usb, logging::Interrupts::Enabled).unwrap(),
-                engine: Core::new(dispatch_output),
+                engine: Core::new(dispatcher),
             },
         )
     }
@@ -95,17 +135,6 @@ mod app {
     fn idle(_: idle::Context) -> ! {
         loop {
             cortex_m::asm::wfi();
-        }
-    }
-
-    fn dispatch_output(output: CoreOut) {
-        match output {
-            CoreOut::SendMidi(msg) => {
-                send_message::spawn(msg).unwrap();
-            }
-            CoreOut::BlinkLed => {
-                blink_led::spawn().ok();
-            }
         }
     }
 
@@ -126,15 +155,101 @@ mod app {
         midi_uart
     }
 
-    // TODO: figure out priorities
-    #[task(binds = LPUART6, shared = [midi_bus], priority = 1)]
+    #[task(binds = LPUART6, shared = [midi_bus], priority = 2)]
     fn midi_handler(mut cx: midi_handler::Context) {
         cx.shared.midi_bus.lock(|midi| midi.handle_interrupt());
     }
 
-    #[task(shared = [midi_bus], priority = 1)]
-    async fn send_message(mut cx: send_message::Context, msg: MidiMsg) {
-        cx.shared.midi_bus.lock(|midi| midi.send(msg));
+    #[task(shared = [midi_bus], priority = 2)]
+    async fn midi_dispatch(
+        mut cx: midi_dispatch::Context,
+        mut r: Receiver<'static, MidiMsg, MIDI_CHANNEL_CAPACITY>,
+    ) -> ! {
+        loop {
+            let msg = r.recv().await.unwrap();
+            cx.shared.midi_bus.lock(|midi| {
+                midi.send(&msg);
+            });
+        }
+    }
+    #[task(shared = [midi_bus], priority = 2)]
+    async fn slide(mut ctx: slide::Context, mut r: Receiver<'static, MidiMsg, 1>) -> ! {
+        let mut GLIDE_DURATION_MS: u32 = 100;
+        const GLIDE_STEPS: u32 = 32;
+        const PITCH_BEND_CENTER: u32 = 8192;
+
+        let mut ch = Channel::Ch1;
+        let mut start_time = Systick::now();
+        let mut step = 0;
+
+        'reset: loop {
+            if step == 0 {
+                match r.recv().await {
+                    Ok(MidiMsg::ChannelVoice {
+                        channel,
+                        msg: ChannelVoiceMsg::NoteOn { .. },
+                    }) => {
+                        ch = channel;
+                        start_time = Systick::now();
+                        info!("start {}", start_time);
+                    }
+                    Ok(MidiMsg::ChannelVoice {
+                        msg:
+                            ChannelVoiceMsg::ControlChange {
+                                control: ControlChange::CC { control: 13, value },
+                            },
+                        ..
+                    }) => {
+                        GLIDE_DURATION_MS = value as u32 * 10000 / 127;
+                        continue 'reset;
+                    }
+                    _ => continue 'reset,
+                }
+            }
+
+            if GLIDE_DURATION_MS == 0 {
+                continue 'reset;
+            }
+
+            let next_step_time = start_time + ((step * GLIDE_DURATION_MS) / GLIDE_STEPS).millis();
+            info!("nextstep {}", next_step_time);
+            futures::select_biased! {
+                                      msg = r.recv().fuse() => match  msg {
+                                      Ok(MidiMsg::ChannelVoice { channel, msg: ChannelVoiceMsg::NoteOn {..}}) => {
+                                          ch = channel;
+                                          start_time = Systick::now();
+                                          step = 0;
+                                          continue 'reset;
+                                      },
+                        Ok(MidiMsg::ChannelVoice {
+                                              msg:
+                                                  ChannelVoiceMsg::ControlChange {
+                                                      control: ControlChange::CC { control: 13, value },
+                                                  },
+                                              ..
+                                          }) => {
+            GLIDE_DURATION_MS = value as u32 * 10000 / 127;
+                                    continue 'reset;
+
+                                },
+                                          _ => {}
+                                      },
+
+                                      _ = Systick::delay_until(next_step_time).fuse() => {
+                                          if step == GLIDE_STEPS {
+                                              step = 0;
+                                              continue 'reset;
+                                          }
+                                          step += 1;
+                                          let bend_value = ((step as u64 * PITCH_BEND_CENTER as u64) / GLIDE_STEPS as u64) as u16;
+                                          let bend_msg = MidiMsg::ChannelVoice {
+                                              channel: ch,
+                                              msg: ChannelVoiceMsg::PitchBend { bend: bend_value },
+                                          };
+                                          ctx.shared.midi_bus.lock(|bus| bus.send(&bend_msg));
+                                      }
+                                  }
+        }
     }
 
     #[task(local = [engine], priority = 1)]
@@ -150,7 +265,7 @@ mod app {
         led.clear();
     }
 
-    #[task(binds = USB_OTG1, local = [poller])]
+    #[task(binds = USB_OTG1, local = [poller], priority = 2)]
     fn log_over_usb(cx: log_over_usb::Context) {
         cx.local.poller.poll();
     }

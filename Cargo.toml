@@ -1,21 +1,24 @@
 [package]
 name = "octaglide-rs"
 version = "0.1.0"
-edition = "2021"
+edition = "2024"
 
 [dependencies]
 rtic = { version = "2", features = ["thumbv7-backend"] }
 rtic-monotonics = { version = "1", default-features = false, features = ["cortex-m-systick"] }
+rtic-sync = "1.4.0" 
 
-# Remove these if you don't want logging.
 imxrt-log = { version = "0.1", default-features = false, features = ["log", "usbd"] }
-log = { version = "0.4", features = ["max_level_debug", "release_max_level_info"] }
-
 teensy4-panic = { version = "0.2", features = ["log"] }
+log = { version = "0.4"}
+
 midi-msg = { version = "0.8", default-features = false }
 embedded-alloc = "0.6.0"
 cortex-m = "0.7.7"
 heapless = "0.9.1"
+paste = "1.0"
+futures = { version = "0.3", default-features = false }
+
 
 [dependencies.teensy4-bsp]
 version = "0.5"

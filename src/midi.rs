@@ -1,4 +1,5 @@
 use heapless::Deque;
+use log::{debug, info};
 use midi_msg::{MidiMsg, ParseError, ReceiverContext};
 use teensy4_bsp::{hal::lpuart::Status, ral};
 
@@ -74,7 +75,7 @@ impl MidiBus {
         }
     }
 
-    pub fn send(&mut self, msg: MidiMsg) {
+    pub fn send(&mut self, msg: &MidiMsg) {
         let bytes = msg.to_midi();
         let is_channel_msg = msg.is_channel_mode();
         let ctx = bytes[0];

@@ -2,10 +2,13 @@ use alloc::{boxed::Box, vec::Vec};
 use log::info;
 use midi_msg::{MidiMsg, ParseError};
 
-use crate::processor::{MidiProcessor, OctaveShifter};
+use crate::{
+    app::Dispatcher,
+    processor::{MidiProcessor, OctaveShifter},
+};
 
 pub struct Core {
-    output: fn(Output),
+    dispatcher: Dispatcher,
     processors: Vec<Box<dyn MidiProcessor>>,
 }
 
@@ -18,15 +21,24 @@ pub enum Input {
 pub enum Output {
     SendMidi(MidiMsg),
     BlinkLed,
+    Slide(MidiMsg),
 }
 
 impl Core {
-    pub fn new(output: fn(Output)) -> Self {
+    pub fn new(dispatcher: Dispatcher) -> Self {
         let processors: Vec<Box<dyn MidiProcessor>> = vec![Box::new(OctaveShifter::new())];
-        Core { output, processors }
+        Core {
+            dispatcher,
+            processors,
+        }
     }
 
     pub async fn process(&mut self, input: Input) {
+        let a: Option<u8> = Some(5);
+        let b: Option<u8> = None;
+
+        if let Some(b) = a {}
+
         match input {
             Input::ProcessMidi(midi_msg) => self.process_midi(midi_msg).await,
         }
@@ -43,8 +55,8 @@ impl Core {
                     .try_fold(msg, |m, p| p.process(m));
 
                 if let Some(midi_msg) = final_msg {
-                    (self.output)(Output::SendMidi(midi_msg));
-                    (self.output)(Output::BlinkLed);
+                    self.dispatcher.dispatch(Output::SendMidi(midi_msg)).await;
+                    self.dispatcher.dispatch(Output::BlinkLed).await;
                 }
             }
             Err(e) => info!("Midi: {:?}", e),

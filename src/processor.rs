@@ -1,7 +1,6 @@
 use midi_msg::{ChannelVoiceMsg, ControlChange, MidiMsg};
 
 const OCTAVE_OFFSET: i8 = 12;
-
 pub trait MidiProcessor {
     fn process(&mut self, msg: MidiMsg) -> Option<MidiMsg>;
 }
