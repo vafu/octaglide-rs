@@ -1,5 +1,4 @@
 use futures::FutureExt;
-use midi_msg::{Channel, ChannelVoiceMsg, MidiMsg};
 use rtic_monotonics::{
     Monotonic,
     systick::{ExtU32, Systick, fugit::Instant},
@@ -9,22 +8,26 @@ use rtic_sync::{
     make_channel,
 };
 
+use crate::anim::modulators::{Messages, Modulator};
+
+use super::modulators::Modulation;
+
 #[derive(Debug)]
-pub enum EngineMessage {
-    Start,
+pub enum Cmd {
+    Start(Modulator),
     Duration(u32),
-    Looping(bool),
+    // Looping(bool),
     Stop,
 }
 
 #[derive(Debug)]
 pub struct Engine {
-    rx: Receiver<'static, EngineMessage, 1>,
-    ch: Channel,
-    cc: u32,
+    rx: Receiver<'static, Cmd, 1>,
     looping: bool,
     duration: u32,
     state: State,
+    _depth: f32,
+    modulator: Option<Modulator>,
 }
 
 #[derive(Debug)]
@@ -36,25 +39,26 @@ enum State {
     },
 }
 
-const MSG_INTERVAL_MS: u32 = 1;
+const MSG_INTERVAL_MS: u32 = 5;
 
 impl Engine {
-    pub fn new(ch: Channel, cc: u32) -> (Self, Sender<'static, EngineMessage, 1>) {
-        let (tx, rx) = make_channel!(EngineMessage, 1);
+    pub fn new() -> (Self, Sender<'static, Cmd, 1>) {
+        let (tx, rx) = make_channel!(Cmd, 1);
         (
             Engine {
                 rx,
-                cc,
-                ch,
                 looping: false,
                 duration: 100,
                 state: State::Idle,
+                // TODO: add depth control
+                _depth: 1.0,
+                modulator: None,
             },
             tx,
         )
     }
 
-    pub async fn tick(&mut self) -> Option<MidiMsg> {
+    pub async fn tick(&mut self) -> Messages {
         if self.duration == 0 {
             return self.recv_cmd().await;
         }
@@ -78,66 +82,61 @@ impl Engine {
                             State::Idle
                         };
                     } else {
-                        // Persist the new progress for the next tick
                         self.state = State::Animating {
                             last_updated: now,
                             progress: new_progress,
                         }
                     }
-                    Some(self.calc_msg(new_progress))
+                    self.modulator.as_mut()?.animate(progress, 1.0, 1.0)
                 }
             },
         }
     }
 
-    async fn recv_cmd(&mut self) -> Option<MidiMsg> {
-        match self.rx.recv().await {
-            Ok(EngineMessage::Start) => {
+    async fn recv_cmd(&mut self) -> Messages {
+        let Ok(cmd) = self.rx.recv().await else {
+            log::error!("error receiving Engine cmd");
+            return None;
+        };
+        match cmd {
+            Cmd::Start(modulator) => {
                 self.state = State::Animating {
                     last_updated: Systick::now(),
                     progress: 0.0,
                 };
-                // self.looping = true;
-                Some(self.calc_msg(0.0))
+                self.modulator = Some(modulator);
+                self.modulator.as_mut()?.animate(0.0, 0.0, 0.0)
             }
-            Ok(EngineMessage::Stop) => {
-                self.state = State::Idle;
-                Some(self.calc_msg(0.0))
-            }
-            Ok(EngineMessage::Duration(dur)) => {
+            Cmd::Stop => match self.state {
+                State::Animating { .. } => {
+                    self.state = State::Idle;
+                    self.modulator.as_mut()?.reset()
+                }
+                State::Idle => None,
+            },
+            Cmd::Duration(dur) => {
                 self.duration = dur;
-                if self.duration == 0 {
-                    Some(self.calc_msg(0.0))
-                } else {
-                    None
+                if self.duration != 0 {
+                    return None;
                 }
-            }
-            Ok(EngineMessage::Looping(looping)) => {
-                self.looping = looping;
-                if looping && matches!(self.state, State::Idle) {
-                    self.state = State::Animating {
-                        last_updated: Systick::now(),
-                        progress: 0.0,
-                    };
-                    Some(self.calc_msg(0.0))
-                } else {
-                    None
-                }
-            }
-            Err(e) => {
-                log::error!("Engine Error [ch:{}, cc:{}] -> {:?}", self.ch, self.cc, e);
-                None
-            }
-        }
-    }
+                let State::Animating { .. } = self.state else {
+                    return None;
+                };
 
-    fn calc_msg(&self, progress: f32) -> MidiMsg {
-        const PITCH_BEND_CENTER: f32 = 8192.0;
-        let progress = progress.clamp(0.0, 1.0);
-        let bend: u16 = (progress * PITCH_BEND_CENTER) as u16;
-        MidiMsg::ChannelVoice {
-            channel: self.ch,
-            msg: ChannelVoiceMsg::PitchBend { bend },
+                self.modulator.as_mut()?.reset()
+            } // EngineMessage::Looping(looping) => {
+              //
+              //     self.looping = looping;
+              //     if looping && matches!(self.state, State::Idle) {
+              //         self.state = State::Animating {
+              //             last_updated: Systick::now(),
+              //             progress: 0.0,
+              //         };
+              //         Some(self.function.reset())
+              //     } else {
+              //         None
+              //     }
+              // }
         }
     }
 }

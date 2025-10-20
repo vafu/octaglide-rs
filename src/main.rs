@@ -22,10 +22,9 @@ fn panic(info: &PanicInfo) -> ! {
     teensy4_panic::sos()
 }
 
+mod anim;
 mod core;
-mod engine;
 mod midi;
-mod processor;
 
 #[macro_use]
 extern crate alloc;
@@ -34,14 +33,14 @@ extern crate alloc;
 mod app {
 
     use crate::{
+        anim::engine::{Engine, Cmd},
         core::{Core, Input as CoreIn, Output as CoreOut},
-        engine::{Engine, EngineMessage},
         midi::MidiBus,
     };
     use board::t40 as brd;
     use embedded_alloc::LlffHeap as Heap;
     use imxrt_log as logging;
-    use midi_msg::{Channel, MidiMsg};
+    use midi_msg::MidiMsg;
     use rtic_monotonics::systick::{Systick, *};
     use rtic_sync::{
         channel::{Receiver, Sender},
@@ -82,7 +81,7 @@ mod app {
 
     pub struct Dispatcher {
         midi_sender: Sender<'static, MidiMsg, MIDI_CHANNEL_CAPACITY>,
-        engine_sender: Sender<'static, EngineMessage, 1>,
+        engine_sender: Sender<'static, Cmd, 1>,
     }
 
     impl Dispatcher {
@@ -94,7 +93,7 @@ mod app {
                 CoreOut::BlinkLed => {
                     blink_led::spawn().ok();
                 }
-                CoreOut::Engine(message) => {
+                CoreOut::Animate(message) => {
                     self.engine_sender.send(message).await.unwrap();
                 }
             }
@@ -130,7 +129,7 @@ mod app {
         });
 
         let (s, r) = make_channel!(MidiMsg, MIDI_CHANNEL_CAPACITY);
-        let (engine, es) = Engine::new(Channel::Ch6, 13);
+        let (engine, es) = Engine::new();
 
         let dispatcher = Dispatcher {
             midi_sender: s,
@@ -143,7 +142,9 @@ mod app {
         (
             Shared {
                 midi_bus: MidiBus::new(prepare_uart(lpuart6, pins.p1, pins.p0), |res| {
-                    process_input::spawn(CoreIn::ProcessMidi(res)).unwrap();
+                    if let Err(e) = process_input::spawn(CoreIn::ProcessMidi(res)) {
+                        log::error!("[Main:CoreIn] {:?}", e);
+                    }
                 }),
             },
             Local {
@@ -197,8 +198,12 @@ mod app {
     #[task(shared = [midi_bus], priority = 2)]
     async fn animate(mut ctx: animate::Context, mut engine: Engine) -> ! {
         loop {
-            if let Some(msg) = engine.tick().await {
-                ctx.shared.midi_bus.lock(|bus| bus.send(&msg));
+            if let Some(msgs) = engine.tick().await {
+                ctx.shared.midi_bus.lock(|bus| {
+                    for msg in msgs {
+                        bus.send(&msg)
+                    }
+                });
             }
         }
     }

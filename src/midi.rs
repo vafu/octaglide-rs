@@ -1,12 +1,12 @@
 use heapless::Deque;
-use log::{debug, info};
+use log::info;
 use midi_msg::{MidiMsg, ParseError, ReceiverContext};
 use teensy4_bsp::{hal::lpuart::Status, ral};
 
 use crate::app::MidiUart;
 
 // TODO: consider changing midi BAUD (elektron Turbo), might need to update buf size.
-const MIDI_BUF_SIZE: usize = 128;
+const MIDI_BUF_SIZE: usize = 32;
 
 pub struct MidiBus {
     uart: MidiUart,
@@ -76,6 +76,7 @@ impl MidiBus {
     }
 
     pub fn send(&mut self, msg: &MidiMsg) {
+        info!(">>> {:?}", msg);
         let bytes = msg.to_midi();
         let is_channel_msg = msg.is_channel_mode();
         let ctx = bytes[0];
@@ -106,8 +107,9 @@ impl MidiBus {
 
     fn drain_rx_queue(&mut self, len: usize) {
         for _ in 0..len {
-            // TODO: might use unchecked
-            self.rx_buf.pop_front();
+            unsafe {
+                self.rx_buf.pop_front_unchecked();
+            }
         }
     }
 }

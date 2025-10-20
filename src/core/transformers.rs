@@ -1,7 +1,7 @@
 use midi_msg::{ChannelVoiceMsg, ControlChange, MidiMsg};
 
 const OCTAVE_OFFSET: i8 = 12;
-pub trait MidiProcessor {
+pub trait MidiTransformer {
     fn process(&mut self, msg: MidiMsg) -> Option<MidiMsg>;
 }
 
@@ -15,7 +15,7 @@ impl OctaveShifter {
     }
 }
 
-impl MidiProcessor for OctaveShifter {
+impl MidiTransformer for OctaveShifter {
     fn process(&mut self, input_msg: MidiMsg) -> Option<MidiMsg> {
         match input_msg {
             MidiMsg::ChannelVoice { msg, channel }
