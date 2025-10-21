@@ -2,6 +2,7 @@ use core::fmt::Debug;
 
 use enum_dispatch::enum_dispatch;
 use heapless::Vec;
+use libm::log;
 use log::info;
 use midi_msg::{Channel, ChannelVoiceMsg, MidiMsg};
 
@@ -18,22 +19,20 @@ pub trait Modulation {
 pub enum Modulator {
     Glide,
 }
+
 const PITCHBEND_CENTER: f32 = 8192.0;
-const PITCHBEND_MAX: f32 = 16383.0;
-const PITCHBEND_MIN: f32 = 0.0;
+const PITCHBEND_MAX: u16 = PITCHBEND_CENTER as u16 * 2;
 const DEFAULT_VELOCITY: u8 = 100;
 
 const SYNTH_BEND_RANGE_SEMITONES: f32 = 2.0;
 
-const POSITIVE_BEND_RADIUS: f32 = PITCHBEND_MAX - PITCHBEND_CENTER; // 8191
-const NEGATIVE_BEND_RADIUS: f32 = PITCHBEND_CENTER - PITCHBEND_MIN; // 8192
 //
 #[derive(Debug)]
 pub struct Glide {
     ch: Channel,
     from: u8,
     to: u8,
-    prev_base: u8,
+    active_note: u8,
 }
 impl Glide {
     pub fn new(ch: Channel, from: u8, to: u8) -> Self {
@@ -41,7 +40,19 @@ impl Glide {
             ch,
             from,
             to,
-            prev_base: 0,
+            active_note: 0,
+        }
+    }
+
+    fn calc_bend_msg(&self, semitones: f32) -> MidiMsg {
+        let bend_fraction = (semitones / SYNTH_BEND_RANGE_SEMITONES).clamp(-1.0, 1.0);
+
+        let bend_value = (PITCHBEND_CENTER + bend_fraction * PITCHBEND_CENTER) as u16;
+        let bend = bend_value.clamp(0, PITCHBEND_MAX);
+
+        MidiMsg::ChannelVoice {
+            channel: self.ch,
+            msg: ChannelVoiceMsg::PitchBend { bend },
         }
     }
 }
@@ -50,56 +61,64 @@ impl Modulation for Glide {
     fn animate(&mut self, progress: f32, _depth: f32, _offset: f32) -> Messages {
         let mut messages = Vec::<MidiMsg, 3>::new();
 
-        if self.from == self.to || SYNTH_BEND_RANGE_SEMITONES == 0.0 {
-            return None;
+        if self.from == self.to {
+            return Some(messages);
         }
 
         let slide_range = self.to as f32 - self.from as f32;
-        let fbase_note = self.from as f32 + (slide_range * progress);
-        let base_note = libm::roundf(fbase_note) as u8;
+        let inter_note = self.from as f32 + (slide_range * progress);
 
-        if base_note != self.prev_base {
+        let new_active_note: u8;
+        let req_ct: f32;
+
+        // Are we in range of the 'to' note? Prioritize it.
+        let dest_ct = inter_note - self.to as f32;
+        if dest_ct.abs() <= SYNTH_BEND_RANGE_SEMITONES {
+            new_active_note = self.to;
+            req_ct = dest_ct;
+        }
+        // If not, are we still in range of the *current* note? Stick to it.
+        else {
+            let active_ct = inter_note - self.active_note as f32;
+            if active_ct.abs() <= SYNTH_BEND_RANGE_SEMITONES {
+                new_active_note = self.active_note;
+                req_ct = active_ct;
+            }
+            // We are out of range of both. Switch to a new intermediate note.
+            else {
+                new_active_note = libm::roundf(inter_note) as u8;
+                req_ct = inter_note - new_active_note as f32;
+            }
+        }
+
+        if new_active_note != self.active_note {
             let _ = messages.push(MidiMsg::ChannelVoice {
                 channel: self.ch,
                 msg: ChannelVoiceMsg::NoteOn {
-                    note: base_note,
+                    note: new_active_note,
                     velocity: DEFAULT_VELOCITY,
                 },
             });
-            if self.prev_base != 0 {
+
+            if self.active_note != 0 {
                 let _ = messages.push(MidiMsg::ChannelVoice {
                     channel: self.ch,
                     msg: ChannelVoiceMsg::NoteOff {
-                        note: self.prev_base,
+                        note: self.active_note,
                         velocity: 0,
                     },
                 });
             }
-            self.prev_base = base_note;
+            self.active_note = new_active_note;
         }
 
-        let bend_semi = fbase_note - base_note as f32;
-        let fbend = (bend_semi / SYNTH_BEND_RANGE_SEMITONES).clamp(-0.5, 0.5);
-
-        let bend_offset = if fbend > 0.0 {
-            fbend * 2.0 * POSITIVE_BEND_RADIUS
-        } else {
-            fbend * 2.0 * NEGATIVE_BEND_RADIUS
-        };
-        let bend_value = (PITCHBEND_CENTER + bend_offset) as u16;
-
-        let _ = messages.push(MidiMsg::ChannelVoice {
-            channel: self.ch,
-            msg: ChannelVoiceMsg::PitchBend {
-                bend: bend_value.clamp(PITCHBEND_MIN as u16, PITCHBEND_MAX as u16),
-            },
-        });
+        let _ = messages.push(self.calc_bend_msg(req_ct));
 
         Some(messages)
     }
 
     fn reset(&mut self) -> Messages {
-        self.prev_base = self.from;
+        self.active_note = self.from;
 
         let mut messages = Vec::<MidiMsg, 3>::new();
         // let _ = messages.push(MidiMsg::ChannelVoice {

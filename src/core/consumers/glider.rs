@@ -17,7 +17,7 @@ use crate::{
     },
 };
 
-const MAX_HELD_NOTES: usize = 16;
+const MAX_HELD_NOTES: usize = 8;
 pub struct Glider {
     held_notes: Vec<u8, MAX_HELD_NOTES>,
 }
@@ -25,6 +25,26 @@ impl Glider {
     pub fn new() -> Self {
         Glider {
             held_notes: Vec::new(),
+        }
+    }
+
+    fn handle_note_on(&mut self, channel: Channel, note: u8, velocity: u8, res: &mut CoreOutput) {
+        if let Some(pos) = self.held_notes.iter().position(|&n| n == note) {
+            self.held_notes.remove(pos);
+        }
+        let from_note = self.held_notes.last().cloned();
+        self.held_notes.push(note).unwrap();
+        if let Some(from) = from_note {
+            res.push(Animate(Cmd::Start(Modulator::Glide(Glide::new(
+                channel, from, note,
+            )))))
+            .ok();
+        } else {
+            res.push(SendMidi(MidiMsg::ChannelVoice {
+                channel,
+                msg: ChannelVoiceMsg::NoteOn { note, velocity },
+            }))
+            .ok();
         }
     }
 
@@ -38,32 +58,31 @@ impl Glider {
         let Some(pos) = self.held_notes.iter().position(|&n| n == note) else {
             return;
         };
-
         let released_note = self.held_notes.remove(pos);
-        if let Some(&old_note) = self.held_notes.last() {
-            // Check if the note we released was the *active* one
-            // if pos == self.held_notes.len() {
-            // if we have some held notes -- slide back to previous
-            // let _ = res.push(Animate(Cmd::Start(Modulator::Glide(Glide::new(
-            //     channel,
-            //     released_note,
-            //     old_note,
-            // )))));
-            res.push(SendMidi(MidiMsg::ChannelVoice {
-                channel,
-                msg: ChannelVoiceMsg::NoteOff {
-                    note: released_note,
-                    velocity: 100,
-                },
-            }))
-            .ok();
-            // }
-        } else {
-            // --- All Notes Off ---
-            // This was the last note. Forward the NoteOff and stop the engine.
-            let _ = res.push(SendMidi(midi_msg.clone()));
-            let _ = res.push(Animate(Cmd::Stop));
-        }
+        // if let Some(&old_note) = self.held_notes.last() {
+        //     // Check if the note we released was the *active* one
+        //     // if pos == self.held_notes.len() {
+        //     // if we have some held notes -- slide back to previous
+        //     // let _ = res.push(Animate(Cmd::Start(Modulator::Glide(Glide::new(
+        //     //     channel,
+        //     //     released_note,
+        //     //     old_note,
+        //     // )))));
+        //     res.push(SendMidi(MidiMsg::ChannelVoice {
+        //         channel,
+        //         msg: ChannelVoiceMsg::NoteOff {
+        //             note: released_note,
+        //             velocity: 100,
+        //         },
+        //     }))
+        //     .ok();
+        //     // }
+        // } else {
+        // --- All Notes Off ---
+        // This was the last note. Forward the NoteOff and stop the engine.
+        res.push(SendMidi(midi_msg.clone())).unwrap();
+        res.push(Animate(Cmd::Stop)).unwrap();
+        // }
     }
 }
 
@@ -77,32 +96,7 @@ impl super::Consumer for Glider {
 
         match msg {
             NoteOn { note, velocity } => {
-                if let Some(pos) = self.held_notes.iter().position(|&n| n == *note) {
-                    self.held_notes.remove(pos);
-                }
-
-                let from_note = self.held_notes.last().cloned();
-
-                self.held_notes.push(*note).ok();
-
-                // TODO: when animating, I need to forbid note off if we're gliding through the
-                // note that is played as a glide side effect.
-                //
-                // if let Some(from) = from_note {
-                //     res.push(Animate(Cmd::Start(Modulator::Glide(Glide::new(
-                //         *channel, from, *note,
-                //     )))))
-                //     .ok();
-                // } else {
-                res.push(SendMidi(MidiMsg::ChannelVoice {
-                    channel: *channel,
-                    msg: ChannelVoiceMsg::NoteOn {
-                        note: *note,
-                        velocity: *velocity,
-                    },
-                }))
-                .ok();
-                // }
+                self.handle_note_on(*channel, *note, *velocity, &mut res);
             }
 
             NoteOff { note, .. } => {

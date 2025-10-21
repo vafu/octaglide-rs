@@ -1,4 +1,5 @@
 use futures::FutureExt;
+use log::info;
 use rtic_monotonics::{
     Monotonic,
     systick::{ExtU32, Systick, fugit::Instant},
@@ -35,7 +36,7 @@ enum State {
     Idle,
     Animating {
         last_updated: Instant<u32, 1, 1000>,
-        progress: f32,
+        progress_at: f32,
     },
 }
 
@@ -67,27 +68,27 @@ impl Engine {
 
             State::Animating {
                 last_updated,
-                progress,
+                progress_at: progress,
             } => futures::select_biased! {
                 new_msg = self.recv_cmd().fuse() => new_msg,
                 _ = Systick::delay(MSG_INTERVAL_MS.millis()).fuse() => {
                     let now = Systick::now();
                     let elapsed = now - last_updated;
                     let progress_delta = elapsed.to_millis() as f32 / self.duration as f32;
-                    let new_progress = progress + progress_delta;
+                    let new_progress = (progress + progress_delta).clamp(0.0, 1.0);
                     if new_progress >= 1.0 {
                         self.state = if self.looping {
-                            State::Animating { last_updated: now, progress: 0.0 }
+                            State::Animating { last_updated: now, progress_at: 0.0 }
                         } else {
                             State::Idle
                         };
                     } else {
                         self.state = State::Animating {
                             last_updated: now,
-                            progress: new_progress,
+                            progress_at: new_progress,
                         }
                     }
-                    self.modulator.as_mut()?.animate(progress, 1.0, 1.0)
+                    self.modulator.as_mut()?.animate(new_progress, 1.0, 1.0)
                 }
             },
         }
@@ -102,7 +103,7 @@ impl Engine {
             Cmd::Start(modulator) => {
                 self.state = State::Animating {
                     last_updated: Systick::now(),
-                    progress: 0.0,
+                    progress_at: 0.0,
                 };
                 self.modulator = Some(modulator);
                 self.modulator.as_mut()?.animate(0.0, 0.0, 0.0)
@@ -112,7 +113,7 @@ impl Engine {
                     self.state = State::Idle;
                     self.modulator.as_mut()?.reset()
                 }
-                State::Idle => None,
+                State::Idle => self.modulator.as_mut()?.reset(),
             },
             Cmd::Duration(dur) => {
                 self.duration = dur;
