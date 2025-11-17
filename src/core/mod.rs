@@ -31,7 +31,7 @@ impl MidiEvent {
 }
 
 use crate::{
-    anim::engine::Cmd,
+    anim::animator::Cmd,
     app::Dispatcher,
     core::{
         consumers::{Consumer, Glider},
@@ -114,6 +114,7 @@ impl Core {
         }
     }
 }
+
 
 
 

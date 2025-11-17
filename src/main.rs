@@ -34,7 +34,7 @@ extern crate alloc;
 mod app {
 
     use crate::{
-        anim::engine::{Cmd, Engine},
+        anim::animator::{Animator, Cmd},
         core::{Core, Input as CoreIn, MidiEvent, Output as CoreOut},
         midi::MidiBus,
     };
@@ -83,7 +83,7 @@ mod app {
 
     pub struct Dispatcher {
         midi_sender: Sender<'static, MidiMsg, MIDI_CHANNEL_CAPACITY>,
-        engine_sender: Sender<'static, Cmd, 1>,
+        animator_sender: Sender<'static, Cmd, 1>,
     }
 
     impl Dispatcher {
@@ -96,7 +96,7 @@ mod app {
                     blink_led::spawn().ok();
                 }
                 CoreOut::Animate(message) => {
-                    self.engine_sender.send(message).await.unwrap();
+                    self.animator_sender.send(message).await.unwrap();
                 }
             }
         }
@@ -131,7 +131,7 @@ mod app {
         });
 
         let (midi_sender, midi_receiver) = make_channel!(MidiMsg, MIDI_CHANNEL_CAPACITY);
-        let (engine, engine_sender) = Engine::new();
+        let (animator, animator_sender) = Animator::new();
         let (core_input_sender, core_input_receiver) =
             make_channel!(CoreIn, CORE_INPUT_CHANNEL_CAPACITY);
 
@@ -140,11 +140,11 @@ mod app {
 
         let dispatcher = Dispatcher {
             midi_sender,
-            engine_sender,
+            animator_sender,
         };
 
         midi_dispatch::spawn(midi_receiver).unwrap();
-        animate::spawn(engine, core_input_sender_clone).unwrap();
+        animate::spawn(animator, core_input_sender_clone).unwrap();
         core_task::spawn(core_input_receiver).ok();
 
         (
@@ -205,11 +205,11 @@ mod app {
     #[task(priority = 2)]
     async fn animate(
         _cx: animate::Context,
-        mut engine: Engine,
+        mut animator: Animator,
         mut sender: Sender<'static, CoreIn, CORE_INPUT_CHANNEL_CAPACITY>,
     ) -> ! {
         loop {
-            if let Some(msgs) = engine.tick().await {
+            if let Some(msgs) = animator.tick().await {
                 for msg in msgs {
                     sender
                         .send(CoreIn::Process(MidiEvent::synthetic(msg)))
@@ -253,6 +253,14 @@ mod app {
         }
     }
 }
+
+
+
+
+
+
+
+
 
 
 

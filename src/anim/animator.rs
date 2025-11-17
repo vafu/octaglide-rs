@@ -22,7 +22,7 @@ pub enum Cmd {
 }
 
 #[derive(Debug)]
-pub struct Engine {
+pub struct Animator {
     rx: Receiver<'static, Cmd, 1>,
     looping: bool,
     duration: u32,
@@ -42,11 +42,11 @@ enum State {
 
 const MSG_INTERVAL_MS: u32 = 5;
 
-impl Engine {
+impl Animator {
     pub fn new() -> (Self, Sender<'static, Cmd, 1>) {
         let (tx, rx) = make_channel!(Cmd, 1);
         (
-            Engine {
+            Animator {
                 rx,
                 looping: false,
                 duration: 100,
@@ -97,7 +97,7 @@ impl Engine {
 
     async fn recv_cmd(&mut self) -> Messages {
         let Ok(cmd) = self.rx.recv().await else {
-            log::error!("error receiving Engine cmd");
+            log::error!("error receiving Animator cmd");
             return None;
         };
         match cmd {
@@ -157,3 +157,7 @@ impl Engine {
         }
     }
 }
+
+
+
+

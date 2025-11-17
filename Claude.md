@@ -35,7 +35,7 @@ Transformers (serial chain) ← synchronous, in-place modifications
     ↓
 Consumers (parallel) ← async, can spawn animations
     ↓
-Animation Engine (optional) ← generates timed MIDI sequences
+Animator (optional) ← generates timed MIDI sequences
     ↓
 Dispatcher
     ↓
@@ -56,11 +56,11 @@ MIDI Output
 2. **Consumers** (`src/core/consumers/`)
    - Final processing stage that can spawn async operations
    - Can generate multiple output messages
-   - Can trigger animations via the Animation Engine
+   - Can trigger animations via the Animator
    - Examples: glide, arpeggiators, chord generators
    - **Why async**: Need to generate timed sequences of MIDI messages
 
-3. **Animation Engine** (`src/anim/engine.rs`)
+3. **Animator** (`src/anim/animator.rs`)
    - Manages time-based MIDI message generation
    - Runs at ~5ms tick intervals (MSG_INTERVAL_MS)
    - Supports progress-based modulation (0.0 to 1.0)
@@ -86,7 +86,7 @@ src/
 │       └── glider.rs   # Glide implementation (WIP, has bugs)
 └── anim/
     ├── mod.rs
-    ├── engine.rs       # Animation engine
+    ├── animator.rs     # Animator
     └── modulators.rs   # Modulator trait + implementations (Glide)
 ```
 
@@ -134,7 +134,7 @@ The project uses RTIC 2.x for task scheduling and resource management.
 | `midi_handler` | 2 | ISR | UART interrupt handler (RX/TX) |
 | `log_over_usb` | 2 | ISR | USB logging |
 | `midi_dispatch` | 2 | async | Send MIDI messages from queue |
-| `animate` | 2 | async | Animation engine tick loop |
+| `animate` | 2 | async | Animator tick loop |
 | `process_input` | 1 | async | Core MIDI processing pipeline |
 | `blink_led` | 1 | async | LED feedback (debugging) |
 
@@ -143,7 +143,7 @@ The project uses RTIC 2.x for task scheduling and resource management.
 
 ### Channels
 - `MidiMsg` channel (capacity: 16): For outgoing MIDI messages
-- `Cmd` channel (capacity: 1): For animation engine commands
+- `Cmd` channel (capacity: 1): For animator commands
 
 ## Important Constants
 
@@ -292,3 +292,9 @@ Current architecture is solid but open to suggestions. Potential considerations:
 - Configuration system is implemented
 - UI is added
 - Hardware changes
+
+
+
+
+
+

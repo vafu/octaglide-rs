@@ -8,7 +8,7 @@ use midi_msg::{
 
 use crate::{
     anim::{
-        engine::Cmd,
+        animator::Cmd,
         modulators::{Glide, Modulator},
     },
     core::{Output::*, consumers::CoreOutput},
@@ -127,3 +127,4 @@ impl super::Consumer for Glider {
         res
     }
 }
+
