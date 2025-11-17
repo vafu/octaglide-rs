@@ -25,6 +25,7 @@ fn panic(info: &PanicInfo) -> ! {
 mod anim;
 mod core;
 mod midi;
+mod midi_fmt;
 
 #[macro_use]
 extern crate alloc;
@@ -34,7 +35,7 @@ mod app {
 
     use crate::{
         anim::engine::{Cmd, Engine},
-        core::{Core, Input as CoreIn, Output as CoreOut},
+        core::{Core, Input as CoreIn, MidiEvent, Output as CoreOut},
         midi::MidiBus,
     };
     use board::t40 as brd;
@@ -207,7 +208,6 @@ mod app {
         mut engine: Engine,
         mut sender: Sender<'static, CoreIn, CORE_INPUT_CHANNEL_CAPACITY>,
     ) -> ! {
-        use crate::core::MidiEvent;
         loop {
             if let Some(msgs) = engine.tick().await {
                 for msg in msgs {
@@ -253,3 +253,6 @@ mod app {
         }
     }
 }
+
+
+

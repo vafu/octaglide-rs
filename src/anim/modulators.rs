@@ -2,7 +2,6 @@ use core::fmt::Debug;
 
 use enum_dispatch::enum_dispatch;
 use heapless::Vec;
-use log::info;
 use midi_msg::{Channel, ChannelVoiceMsg, MidiMsg};
 
 pub type Messages = Option<Vec<MidiMsg, 3>>;
@@ -153,3 +152,4 @@ impl Modulation for Glide {
         Some(messages)
     }
 }
+

@@ -3,7 +3,9 @@ mod transformers;
 
 use alloc::{boxed::Box, vec::Vec};
 use log::info;
-use midi_msg::{ChannelModeMsg, ChannelVoiceMsg, MidiMsg, ParseError};
+use midi_msg::{MidiMsg, ParseError};
+
+use crate::midi_fmt::MidiFmt;
 
 /// MIDI message with metadata about its origin and context
 #[derive(Debug, Clone)]
@@ -91,19 +93,12 @@ impl Core {
 
                 event.msg = Ok(transformed_msg);
 
-                // Format and log event (skip PitchBend)
-                if let Ok(MidiMsg::ChannelVoice { msg: voice_msg, .. }) = &event.msg {
+                // Format and log event
+                if let Ok(msg) = &event.msg {
                     let synthetic = if event.synthetic { " [synthetic]" } else { "" };
-                    let formatted = match voice_msg {
-                        ChannelVoiceMsg::NoteOn { note, velocity } => 
-                            Some(format!("<<< NoteOn {} vel={}{}", note, velocity, synthetic)),
-                        ChannelVoiceMsg::NoteOff { note, velocity } => 
-                            Some(format!("<<< NoteOff {} vel={}{}", note, velocity, synthetic)),
-                        ChannelVoiceMsg::PitchBend { .. } => None,
-                        _ => Some(format!("<<< {:?}{}", voice_msg, synthetic)),
-                    };
-                    if let Some(msg) = formatted {
-                        info!("{}", msg);
+                    let formatted = alloc::format!("{}", MidiFmt(msg));
+                    if !formatted.is_empty() {
+                        info!("<<< {}{}", formatted, synthetic);
                     }
                 } else {
                     info!("<<< {:?}", &event);
@@ -119,6 +114,10 @@ impl Core {
         }
     }
 }
+
+
+
+
 
 
 

@@ -4,7 +4,11 @@ use midi_msg::{MidiMsg, ReceiverContext};
 use rtic_sync::channel::Sender;
 use teensy4_bsp::{hal::lpuart::Status, ral};
 
-use crate::{app::MidiUart, core::Input as CoreIn};
+use crate::{
+    app::MidiUart,
+    core::{Input as CoreIn, MidiEvent},
+    midi_fmt::MidiFmt,
+};
 
 // TODO: consider changing midi BAUD (elektron Turbo), might need to update buf size.
 const MIDI_BUF_SIZE: usize = 32;
@@ -49,7 +53,6 @@ impl MidiBus {
 
                 match MidiMsg::from_midi_with_context(slice, &mut self.rx_ctx) {
                     Ok((msg, len)) => {
-                        use crate::core::MidiEvent;
                         let input = CoreIn::Process(MidiEvent::from_user(Ok(msg)));
                         if let Err(e) = self.core_sender.try_send(input) {
                             log::error!("[MidiBus:CoreIn] {:?}", e);
@@ -62,7 +65,6 @@ impl MidiBus {
                     }
 
                     Err(e) => {
-                        use crate::core::MidiEvent;
                         let input = CoreIn::Process(MidiEvent::from_user(Err(e)));
                         if let Err(e) = self.core_sender.try_send(input) {
                             log::error!("[MidiBus:CoreIn] {:?}", e);
@@ -85,28 +87,9 @@ impl MidiBus {
     }
 
     pub fn send(&mut self, msg: &MidiMsg) {
-        // Format and log message (skip PitchBend)
-        if let MidiMsg::ChannelVoice {
-            msg: voice_msg, ..
-        } = msg
-        {
-            let formatted = match voice_msg {
-                midi_msg::ChannelVoiceMsg::NoteOn { note, velocity } => Some(format!(
-                    ">>> NoteOn {} vel={}",
-                    note, velocity
-                )),
-                midi_msg::ChannelVoiceMsg::NoteOff { note, velocity } => Some(format!(
-                    ">>> NoteOff {} vel={}",
-                    note, velocity
-                )),
-                midi_msg::ChannelVoiceMsg::PitchBend { .. } => None,
-                _ => Some(format!(">>> {:?}", voice_msg)),
-            };
-            if let Some(msg) = formatted {
-                info!("{}", msg);
-            }
-        } else {
-            info!(">>> {:?}", msg);
+        let formatted = alloc::format!("{}", MidiFmt(msg));
+        if !formatted.is_empty() {
+            info!(">>> {}", formatted);
         }
 
         let bytes = msg.to_midi();
@@ -145,4 +128,8 @@ impl MidiBus {
         }
     }
 }
+
+
+
+
 
