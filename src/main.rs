@@ -67,6 +67,13 @@ mod app {
     const MIDI_CHANNEL_CAPACITY: usize = 16;
     const CORE_INPUT_CHANNEL_CAPACITY: usize = 16;
 
+    // Channel type aliases
+    pub type MidiSender = Sender<'static, MidiMsg, MIDI_CHANNEL_CAPACITY>;
+    pub type MidiReceiver = Receiver<'static, MidiMsg, MIDI_CHANNEL_CAPACITY>;
+    pub type AnimatorSender = Sender<'static, Cmd, 1>;
+    pub type CoreSender = Sender<'static, CoreIn, CORE_INPUT_CHANNEL_CAPACITY>;
+    pub type CoreReceiver = Receiver<'static, CoreIn, CORE_INPUT_CHANNEL_CAPACITY>;
+
     pub(crate) static mut POLLER: Option<logging::Poller> = None;
 
     #[shared]
@@ -82,8 +89,8 @@ mod app {
     }
 
     pub struct Dispatcher {
-        midi_sender: Sender<'static, MidiMsg, MIDI_CHANNEL_CAPACITY>,
-        animator_sender: Sender<'static, Cmd, 1>,
+        midi_sender: MidiSender,
+        animator_sender: AnimatorSender,
     }
 
     impl Dispatcher {
@@ -132,11 +139,7 @@ mod app {
 
         let (midi_sender, midi_receiver) = make_channel!(MidiMsg, MIDI_CHANNEL_CAPACITY);
         let (animator, animator_sender) = Animator::new();
-        let (core_input_sender, core_input_receiver) =
-            make_channel!(CoreIn, CORE_INPUT_CHANNEL_CAPACITY);
-
-        let core_input_sender_clone = core_input_sender.clone();
-        let core_input_sender_for_midi = core_input_sender.clone();
+        let (core_sender, core_receiver) = make_channel!(CoreIn, CORE_INPUT_CHANNEL_CAPACITY);
 
         let dispatcher = Dispatcher {
             midi_sender,
@@ -144,14 +147,14 @@ mod app {
         };
 
         midi_dispatch::spawn(midi_receiver).unwrap();
-        animate::spawn(animator, core_input_sender_clone).unwrap();
-        core_task::spawn(core_input_receiver).ok();
+        animate::spawn(animator, core_sender.clone()).unwrap();
+        core_task::spawn(core_receiver).ok();
 
         (
             Shared {
                 midi_bus: MidiBus::new(
                     prepare_uart(lpuart6, pins.p1, pins.p0),
-                    core_input_sender_for_midi,
+                    core_sender.clone(),
                 ),
             },
             Local {
@@ -191,10 +194,7 @@ mod app {
     }
 
     #[task(shared = [midi_bus], priority = 2)]
-    async fn midi_dispatch(
-        mut cx: midi_dispatch::Context,
-        mut r: Receiver<'static, MidiMsg, MIDI_CHANNEL_CAPACITY>,
-    ) -> ! {
+    async fn midi_dispatch(mut cx: midi_dispatch::Context, mut r: MidiReceiver) -> ! {
         loop {
             let msg = r.recv().await.unwrap();
             cx.shared.midi_bus.lock(|midi| {
@@ -203,11 +203,7 @@ mod app {
         }
     }
     #[task(priority = 2)]
-    async fn animate(
-        _cx: animate::Context,
-        mut animator: Animator,
-        mut sender: Sender<'static, CoreIn, CORE_INPUT_CHANNEL_CAPACITY>,
-    ) -> ! {
+    async fn animate(_cx: animate::Context, mut animator: Animator, mut sender: CoreSender) -> ! {
         loop {
             if let Some(msgs) = animator.tick().await {
                 for msg in msgs {
@@ -221,10 +217,7 @@ mod app {
     }
 
     #[task(local = [core], priority = 1)]
-    async fn core_task(
-        cx: core_task::Context,
-        mut receiver: Receiver<'static, CoreIn, CORE_INPUT_CHANNEL_CAPACITY>,
-    ) -> ! {
+    async fn core_task(cx: core_task::Context, mut receiver: CoreReceiver) -> ! {
         let core = cx.local.core;
         loop {
             if let Ok(input) = receiver.recv().await {
@@ -253,14 +246,3 @@ mod app {
         }
     }
 }
-
-
-
-
-
-
-
-
-
-
-

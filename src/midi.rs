@@ -1,11 +1,10 @@
 use heapless::Deque;
 use log::info;
 use midi_msg::{MidiMsg, ReceiverContext};
-use rtic_sync::channel::Sender;
 use teensy4_bsp::{hal::lpuart::Status, ral};
 
 use crate::{
-    app::MidiUart,
+    app::{CoreSender, MidiUart},
     core::{Input as CoreIn, MidiEvent},
     midi_fmt::MidiFmt,
 };
@@ -22,11 +21,11 @@ pub struct MidiBus {
     rx_ctx: ReceiverContext,
     rx_buf: Deque<u8, MIDI_BUF_SIZE>,
 
-    core_sender: Sender<'static, CoreIn, 16>,
+    core_sender: CoreSender,
 }
 
 impl MidiBus {
-    pub fn new(uart: MidiUart, core_sender: Sender<'static, CoreIn, 16>) -> Self {
+    pub fn new(uart: MidiUart, core_sender: CoreSender) -> Self {
         Self {
             uart,
             core_sender,
@@ -128,3 +127,7 @@ impl MidiBus {
         }
     }
 }
+
+
+
+

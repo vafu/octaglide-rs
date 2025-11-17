@@ -5,11 +5,11 @@ use rtic_monotonics::{
     systick::{ExtU32, Systick, fugit::Instant},
 };
 use rtic_sync::{
-    channel::{Receiver, Sender},
+    channel::Receiver,
     make_channel,
 };
 
-use crate::anim::modulators::{Messages, Modulator};
+use crate::{anim::modulators::{Messages, Modulator}, app::AnimatorSender};
 
 use super::modulators::Modulation;
 
@@ -43,7 +43,7 @@ enum State {
 const MSG_INTERVAL_MS: u32 = 5;
 
 impl Animator {
-    pub fn new() -> (Self, Sender<'static, Cmd, 1>) {
+    pub fn new() -> (Self, AnimatorSender) {
         let (tx, rx) = make_channel!(Cmd, 1);
         (
             Animator {
