@@ -1,5 +1,4 @@
 use heapless::Vec;
-use log::debug;
 use midi_msg::{
     Channel,
     ChannelVoiceMsg::{self, *},
@@ -13,7 +12,7 @@ use crate::{
     },
     core::{
         Output::*,
-        consumers::{Consumer, CoreOutput},
+        consumers::CoreOutput,
     },
 };
 
@@ -90,8 +89,12 @@ impl Glider {
 }
 
 impl super::Consumer for Glider {
-    fn consume(&mut self, midi_msg: &MidiMsg) -> CoreOutput {
+    fn consume(&mut self, event: &super::super::MidiEvent) -> CoreOutput {
         let mut res = Vec::new();
+
+        let Ok(ref midi_msg) = event.msg else {
+            return res;
+        };
 
         let MidiMsg::ChannelVoice { channel, msg } = midi_msg else {
             return res;
@@ -99,11 +102,24 @@ impl super::Consumer for Glider {
 
         match msg {
             NoteOn { note, velocity } => {
-                self.handle_note_on(*channel, *note, *velocity, &mut res);
+                // Only process user NoteOn, not synthetic
+                if !event.synthetic {
+                    self.handle_note_on(*channel, *note, *velocity, &mut res);
+                }
             }
 
             NoteOff { note, .. } => {
-                self.handle_note_off(*channel, *note, midi_msg, &mut res);
+                if event.synthetic {
+                    // Filter out synthetic NoteOff for held notes
+                    if self.held_notes.contains(note) {
+                        return res; // Filtered out
+                    }
+                    // Allow synthetic NoteOff for non-held notes (intermediate notes)
+                    res.push(SendMidi(midi_msg.clone())).ok();
+                } else {
+                    // User NoteOff - always process
+                    self.handle_note_off(*channel, *note, midi_msg, &mut res);
+                }
             }
 
             _ => {}
@@ -111,3 +127,6 @@ impl super::Consumer for Glider {
         res
     }
 }
+
+
+

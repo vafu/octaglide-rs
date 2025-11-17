@@ -108,9 +108,9 @@ impl Modulation for Glide {
                 });
             }
 
-            // Only send NoteOff for intermediate notes, not user-held notes (from/to)
-            // Glider controls when user-held notes are released
-            if self.active_note != 0 && self.active_note != self.from && self.active_note != self.to {
+            // Send NoteOff for the previous note
+            // Glider will filter these out for user-held notes, but allows cleanup of intermediate notes
+            if self.active_note != 0 {
                 let _ = messages.push(MidiMsg::ChannelVoice {
                     channel: self.ch,
                     msg: ChannelVoiceMsg::NoteOff {
@@ -119,6 +119,7 @@ impl Modulation for Glide {
                     },
                 });
             }
+            
             self.active_note = new_active_note;
         }
 
@@ -150,5 +151,7 @@ impl Modulation for Glide {
         Some(messages)
     }
 }
+
+
 
 

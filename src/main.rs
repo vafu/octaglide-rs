@@ -142,7 +142,8 @@ mod app {
         (
             Shared {
                 midi_bus: MidiBus::new(prepare_uart(lpuart6, pins.p1, pins.p0), |res| {
-                    if let Err(e) = process_input::spawn(CoreIn::ProcessMidi(res)) {
+                    use crate::core::MidiEvent;
+                    if let Err(e) = process_input::spawn(CoreIn::Process(MidiEvent::from_user(res))) {
                         log::error!("[Main:CoreIn] {:?}", e);
                     }
                 }),
@@ -195,15 +196,16 @@ mod app {
             });
         }
     }
-    #[task(shared = [midi_bus], priority = 2)]
-    async fn animate(mut ctx: animate::Context, mut engine: Engine) -> ! {
+    #[task(priority = 2)]
+    async fn animate(_ctx: animate::Context, mut engine: Engine) -> ! {
+        use crate::core::MidiEvent;
         loop {
             if let Some(msgs) = engine.tick().await {
-                ctx.shared.midi_bus.lock(|bus| {
-                    for msg in msgs {
-                        bus.send(&msg)
+                for msg in msgs {
+                    if let Err(e) = process_input::spawn(CoreIn::Process(MidiEvent::synthetic(msg))) {
+                        log::error!("[Animate] {:?}", e);
                     }
-                });
+                }
             }
         }
     }
@@ -223,7 +225,7 @@ mod app {
 
     #[task(binds = USB_OTG1, priority = 2)]
     #[allow(static_mut_refs)]
-    fn log_over_usb(cx: log_over_usb::Context) {
+    fn log_over_usb(_cx: log_over_usb::Context) {
         unsafe {
             crate::interrupt::free(|_| {
                 if let Some(p) = POLLER.as_mut() {
@@ -233,3 +235,7 @@ mod app {
         }
     }
 }
+
+
+
+

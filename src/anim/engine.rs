@@ -1,5 +1,4 @@
 use futures::FutureExt;
-use log::info;
 use rtic_monotonics::{
     Monotonic,
     systick::{ExtU32, Systick, fugit::Instant},

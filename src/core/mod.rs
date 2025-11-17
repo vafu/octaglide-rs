@@ -5,6 +5,29 @@ use alloc::{boxed::Box, vec::Vec};
 use log::info;
 use midi_msg::{MidiMsg, ParseError};
 
+/// MIDI message with metadata about its origin and context
+#[derive(Debug, Clone)]
+pub struct MidiEvent {
+    pub msg: Result<MidiMsg, ParseError>,
+    pub synthetic: bool,
+}
+
+impl MidiEvent {
+    pub fn from_user(msg: Result<MidiMsg, ParseError>) -> Self {
+        Self {
+            msg,
+            synthetic: false,
+        }
+    }
+
+    pub fn synthetic(msg: MidiMsg) -> Self {
+        Self {
+            msg: Ok(msg),
+            synthetic: true,
+        }
+    }
+}
+
 use crate::{
     anim::engine::Cmd,
     app::Dispatcher,
@@ -22,7 +45,7 @@ pub struct Core {
 
 #[derive(Debug)]
 pub enum Input {
-    ProcessMidi(Result<MidiMsg, ParseError>),
+    Process(MidiEvent),
 }
 
 #[derive(Debug)]
@@ -45,28 +68,33 @@ impl Core {
 
     pub async fn process(&mut self, input: Input) {
         match input {
-            Input::ProcessMidi(midi_msg) => self.process_midi(midi_msg).await,
-        }
-    }
+            Input::Process(mut event) => {
+                // Handle parse errors
+                let Ok(msg) = event.msg else {
+                    info!("Midi: {:?}", event.msg.unwrap_err());
+                    return;
+                };
 
-    async fn process_midi(&mut self, msg: Result<MidiMsg, midi_msg::ParseError>) {
-        match msg {
-            Ok(msg) => {
-                let msg = self
-                    .transformers
-                    .iter_mut()
-                    .try_fold(msg, |m, p| p.process(m));
-                info!("<<< {:?}", &msg);
+                // Apply transformers only to user MIDI
+                let transformed_msg = if !event.synthetic {
+                    match self.transformers.iter_mut().try_fold(msg, |m, p| p.process(m)) {
+                        Some(m) => m,
+                        None => return, // Transformer filtered it out
+                    }
+                } else {
+                    msg
+                };
 
-                if let Some(msg) = msg {
-                    for c in self.consumers.iter_mut() {
-                        for out in c.consume(&msg) {
-                            self.dispatcher.dispatch(out).await
-                        }
+                event.msg = Ok(transformed_msg);
+                info!("<<< {:?}", &event);
+
+                // Process the event through consumers
+                for c in self.consumers.iter_mut() {
+                    for out in c.consume(&event) {
+                        self.dispatcher.dispatch(out).await
                     }
                 }
             }
-            Err(e) => info!("Midi: {:?}", e),
         }
     }
 }
