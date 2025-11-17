@@ -33,7 +33,7 @@ extern crate alloc;
 mod app {
 
     use crate::{
-        anim::engine::{Engine, Cmd},
+        anim::engine::{Cmd, Engine},
         core::{Core, Input as CoreIn, Output as CoreOut},
         midi::MidiBus,
     };

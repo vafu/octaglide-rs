@@ -1,5 +1,5 @@
 use heapless::Vec;
-use log::info;
+use log::debug;
 use midi_msg::{
     Channel,
     ChannelVoiceMsg::{self, *},
@@ -34,16 +34,19 @@ impl Glider {
         }
         let from_note = self.held_notes.last().cloned();
         self.held_notes.push(note).unwrap();
+
+        // Always send NoteOn for the new note first
+        res.push(SendMidi(MidiMsg::ChannelVoice {
+            channel,
+            msg: ChannelVoiceMsg::NoteOn { note, velocity },
+        }))
+        .ok();
+
+        // Then start glide animation if there was a previous note
         if let Some(from) = from_note {
             res.push(Animate(Cmd::Start(Modulator::Glide(Glide::new(
                 channel, from, note,
             )))))
-            .ok();
-        } else {
-            res.push(SendMidi(MidiMsg::ChannelVoice {
-                channel,
-                msg: ChannelVoiceMsg::NoteOn { note, velocity },
-            }))
             .ok();
         }
     }
@@ -59,30 +62,30 @@ impl Glider {
             return;
         };
         let released_note = self.held_notes.remove(pos);
-        // if let Some(&old_note) = self.held_notes.last() {
-        //     // Check if the note we released was the *active* one
-        //     // if pos == self.held_notes.len() {
-        //     // if we have some held notes -- slide back to previous
-        //     // let _ = res.push(Animate(Cmd::Start(Modulator::Glide(Glide::new(
-        //     //     channel,
-        //     //     released_note,
-        //     //     old_note,
-        //     // )))));
-        //     res.push(SendMidi(MidiMsg::ChannelVoice {
-        //         channel,
-        //         msg: ChannelVoiceMsg::NoteOff {
-        //             note: released_note,
-        //             velocity: 100,
-        //         },
-        //     }))
-        //     .ok();
-        //     // }
-        // } else {
-        // --- All Notes Off ---
-        // This was the last note. Forward the NoteOff and stop the engine.
-        res.push(SendMidi(midi_msg.clone())).unwrap();
-        res.push(Animate(Cmd::Stop)).unwrap();
-        // }
+        if let Some(&old_note) = self.held_notes.last() {
+            // Check if the note we released was the *active* one
+            if pos == self.held_notes.len() {
+                // if we have some held notes -- slide back to previous
+                let _ = res.push(Animate(Cmd::Start(Modulator::Glide(Glide::new(
+                    channel,
+                    released_note,
+                    old_note,
+                )))));
+                res.push(SendMidi(MidiMsg::ChannelVoice {
+                    channel,
+                    msg: ChannelVoiceMsg::NoteOff {
+                        note: released_note,
+                        velocity: 100,
+                    },
+                }))
+                .ok();
+            }
+        } else {
+            // --- All Notes Off ---
+            // This was the last note. Forward the NoteOff and stop the engine.
+            res.push(SendMidi(midi_msg.clone())).unwrap();
+            res.push(Animate(Cmd::Stop)).unwrap();
+        }
     }
 }
 
