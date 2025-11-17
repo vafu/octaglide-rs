@@ -14,10 +14,13 @@ impl<'a> fmt::Display for MidiFmt<'a> {
                 ChannelVoiceMsg::NoteOff { note, velocity } => {
                     write!(f, "NoteOff {} vel={}", note, velocity)
                 }
-                ChannelVoiceMsg::PitchBend { .. } => write!(f, ""),
+                ChannelVoiceMsg::PitchBend { bend } => {
+                    write!(f, "PitchBend {}", bend)
+                }
                 other => write!(f, "{:?}", other),
             },
             other => write!(f, "{:?}", other),
         }
     }
 }
+

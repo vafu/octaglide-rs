@@ -35,7 +35,7 @@ mod app {
 
     use crate::{
         anim::animator::{Animator, Cmd},
-        core::{Core, Input as CoreIn, MidiEvent, Output as CoreOut},
+        core::{Core, Input as CoreIn, MidiEvent},
         midi::MidiBus,
     };
     use board::t40 as brd;
@@ -88,26 +88,7 @@ mod app {
         // poller: logging::Poller,
     }
 
-    pub struct Dispatcher {
-        midi_sender: MidiSender,
-        animator_sender: AnimatorSender,
-    }
 
-    impl Dispatcher {
-        pub async fn dispatch(&mut self, output: CoreOut) {
-            match output {
-                CoreOut::SendMidi(msg) => {
-                    self.midi_sender.send(msg.clone()).await.unwrap();
-                }
-                CoreOut::BlinkLed => {
-                    blink_led::spawn().ok();
-                }
-                CoreOut::Animate(message) => {
-                    self.animator_sender.send(message).await.unwrap();
-                }
-            }
-        }
-    }
 
     #[global_allocator]
     static HEAP: Heap = Heap::empty();
@@ -141,11 +122,6 @@ mod app {
         let (animator, animator_sender) = Animator::new();
         let (core_sender, core_receiver) = make_channel!(CoreIn, CORE_INPUT_CHANNEL_CAPACITY);
 
-        let dispatcher = Dispatcher {
-            midi_sender,
-            animator_sender,
-        };
-
         midi_dispatch::spawn(midi_receiver).unwrap();
         animate::spawn(animator, core_sender.clone()).unwrap();
         core_task::spawn(core_receiver).ok();
@@ -159,7 +135,7 @@ mod app {
             },
             Local {
                 led: board::led(&mut gpio2, pins.p13),
-                core: Core::new(dispatcher),
+                core: Core::new(midi_sender, animator_sender),
             },
         )
     }
@@ -246,3 +222,6 @@ mod app {
         }
     }
 }
+
+
+

@@ -86,9 +86,9 @@ impl MidiBus {
     }
 
     pub fn send(&mut self, msg: &MidiMsg) {
-        let formatted = alloc::format!("{}", MidiFmt(msg));
-        if !formatted.is_empty() {
-            info!(">>> {}", formatted);
+        // Skip logging PitchBend to avoid noise
+        if !matches!(msg, MidiMsg::ChannelVoice { msg: midi_msg::ChannelVoiceMsg::PitchBend { .. }, .. }) {
+            info!(">>> {}", MidiFmt(msg));
         }
 
         let bytes = msg.to_midi();
@@ -127,6 +127,7 @@ impl MidiBus {
         }
     }
 }
+
 
 
 

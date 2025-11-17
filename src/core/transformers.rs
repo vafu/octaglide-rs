@@ -22,7 +22,12 @@ impl MidiTransformer for OctaveShifter {
             | MidiMsg::RunningChannelVoice { msg, channel } => match msg {
                 ChannelVoiceMsg::ControlChange { control } => match control {
                     ControlChange::CC { control, value } => {
+                        // TODO: make CC configurable (currently hardcoded for convenience)
                         if control == 20 {
+                            // Map CC value (0-127) to octave shifts:
+                            // - 64 is center (no shift)
+                            // - Divide by 16 to get 8 equal segments
+                            // - Range: -4 to +3 octaves
                             let octaves = (value as i8 - 64) / 16;
                             self.offset = octaves * OCTAVE_OFFSET;
                             None

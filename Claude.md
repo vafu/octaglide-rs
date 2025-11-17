@@ -198,6 +198,15 @@ cargo build --release
 - Heavy use of `heapless` for fixed-size collections (no dynamic allocation in hot paths)
 - RTIC tasks use `async`/`await` for cooperative multitasking
 
+### Error Handling Policy
+**Current (Development)**: Using `unwrap()` on channel sends to catch buffer overflows early and panic immediately.
+
+**TODO BEFORE RELEASE**: Review all error handling. For production embedded real-time system:
+- Channel send errors should likely log and continue (not panic)
+- Consider what happens when channels are full (backpressure strategy)
+- Document recovery behavior for each error case
+- Test error scenarios thoroughly
+
 ## Architecture Extension Ideas
 
 Current architecture is solid but open to suggestions. Potential considerations:
@@ -292,6 +301,7 @@ Current architecture is solid but open to suggestions. Potential considerations:
 - Configuration system is implemented
 - UI is added
 - Hardware changes
+
 
 
 

@@ -32,7 +32,7 @@ impl MidiEvent {
 
 use crate::{
     anim::animator::Cmd,
-    app::Dispatcher,
+    app::{AnimatorSender, MidiSender},
     core::{
         consumers::{Consumer, Glider},
         transformers::{MidiTransformer, OctaveShifter},
@@ -40,7 +40,8 @@ use crate::{
 };
 
 pub struct Core {
-    dispatcher: Dispatcher,
+    midi_sender: MidiSender,
+    animator_sender: AnimatorSender,
     transformers: Vec<Box<dyn MidiTransformer>>,
     consumers: Vec<Box<dyn Consumer>>,
 }
@@ -58,11 +59,12 @@ pub enum Output {
 }
 
 impl Core {
-    pub fn new(dispatcher: Dispatcher) -> Self {
+    pub fn new(midi_sender: MidiSender, animator_sender: AnimatorSender) -> Self {
         let transformers: Vec<Box<dyn MidiTransformer>> = vec![Box::new(OctaveShifter::new())];
         let consumers: Vec<Box<dyn Consumer>> = vec![Box::new(Glider::new())];
         Core {
-            dispatcher,
+            midi_sender,
+            animator_sender,
             transformers,
             consumers,
         }
@@ -95,10 +97,10 @@ impl Core {
 
                 // Format and log event
                 if let Ok(msg) = &event.msg {
-                    let synthetic = if event.synthetic { " [synthetic]" } else { "" };
-                    let formatted = alloc::format!("{}", MidiFmt(msg));
-                    if !formatted.is_empty() {
-                        info!("<<< {}{}", formatted, synthetic);
+                    // Skip logging PitchBend to avoid noise
+                    if !matches!(msg, MidiMsg::ChannelVoice { msg: midi_msg::ChannelVoiceMsg::PitchBend { .. }, .. }) {
+                        let synthetic = if event.synthetic { " [synthetic]" } else { "" };
+                        info!("<<< {}{}", MidiFmt(msg), synthetic);
                     }
                 } else {
                     info!("<<< {:?}", &event);
@@ -107,13 +109,27 @@ impl Core {
                 // Process the event through consumers
                 for c in self.consumers.iter_mut() {
                     for out in c.consume(&event) {
-                        self.dispatcher.dispatch(out).await
+                        match out {
+                            Output::SendMidi(msg) => {
+                                self.midi_sender.send(msg.clone()).await.unwrap();
+                            }
+                            Output::BlinkLed => {
+                                crate::app::blink_led::spawn().ok();
+                            }
+                            Output::Animate(cmd) => {
+                                self.animator_sender.send(cmd).await.unwrap();
+                            }
+                        }
                     }
                 }
             }
         }
     }
 }
+
+
+
+
 
 
 

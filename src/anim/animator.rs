@@ -4,12 +4,12 @@ use rtic_monotonics::{
     Monotonic,
     systick::{ExtU32, Systick, fugit::Instant},
 };
-use rtic_sync::{
-    channel::Receiver,
-    make_channel,
-};
+use rtic_sync::{channel::Receiver, make_channel};
 
-use crate::{anim::modulators::{Messages, Modulator}, app::AnimatorSender};
+use crate::{
+    anim::modulators::{Messages, Modulator},
+    app::AnimatorSender,
+};
 
 use super::modulators::Modulation;
 
@@ -27,6 +27,7 @@ pub struct Animator {
     looping: bool,
     duration: u32,
     state: State,
+    // TODO: implement depth control (see roadmap) - will control animation intensity
     _depth: f32,
     modulator: Option<Modulator>,
 }
@@ -51,8 +52,7 @@ impl Animator {
                 looping: false,
                 duration: 100,
                 state: State::Idle,
-                // TODO: add depth control
-                _depth: 1.0,
+                _depth: 1.0, // Default depth (full intensity)
                 modulator: None,
             },
             tx,
@@ -157,7 +157,5 @@ impl Animator {
         }
     }
 }
-
-
 
 
