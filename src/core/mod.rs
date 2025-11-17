@@ -3,7 +3,7 @@ mod transformers;
 
 use alloc::{boxed::Box, vec::Vec};
 use log::info;
-use midi_msg::{MidiMsg, ParseError};
+use midi_msg::{ChannelModeMsg, ChannelVoiceMsg, MidiMsg, ParseError};
 
 /// MIDI message with metadata about its origin and context
 #[derive(Debug, Clone)]
@@ -77,7 +77,11 @@ impl Core {
 
                 // Apply transformers only to user MIDI
                 let transformed_msg = if !event.synthetic {
-                    match self.transformers.iter_mut().try_fold(msg, |m, p| p.process(m)) {
+                    match self
+                        .transformers
+                        .iter_mut()
+                        .try_fold(msg, |m, p| p.process(m))
+                    {
                         Some(m) => m,
                         None => return, // Transformer filtered it out
                     }
@@ -86,7 +90,24 @@ impl Core {
                 };
 
                 event.msg = Ok(transformed_msg);
-                info!("<<< {:?}", &event);
+
+                // Format and log event (skip PitchBend)
+                if let Ok(MidiMsg::ChannelVoice { msg: voice_msg, .. }) = &event.msg {
+                    let synthetic = if event.synthetic { " [synthetic]" } else { "" };
+                    let formatted = match voice_msg {
+                        ChannelVoiceMsg::NoteOn { note, velocity } => 
+                            Some(format!("<<< NoteOn {} vel={}{}", note, velocity, synthetic)),
+                        ChannelVoiceMsg::NoteOff { note, velocity } => 
+                            Some(format!("<<< NoteOff {} vel={}{}", note, velocity, synthetic)),
+                        ChannelVoiceMsg::PitchBend { .. } => None,
+                        _ => Some(format!("<<< {:?}{}", voice_msg, synthetic)),
+                    };
+                    if let Some(msg) = formatted {
+                        info!("{}", msg);
+                    }
+                } else {
+                    info!("<<< {:?}", &event);
+                }
 
                 // Process the event through consumers
                 for c in self.consumers.iter_mut() {
@@ -98,3 +119,6 @@ impl Core {
         }
     }
 }
+
+
+

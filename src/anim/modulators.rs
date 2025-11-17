@@ -2,6 +2,7 @@ use core::fmt::Debug;
 
 use enum_dispatch::enum_dispatch;
 use heapless::Vec;
+use log::info;
 use midi_msg::{Channel, ChannelVoiceMsg, MidiMsg};
 
 pub type Messages = Option<Vec<MidiMsg, 3>>;
@@ -27,10 +28,10 @@ const SYNTH_BEND_RANGE_SEMITONES: f32 = 2.0;
 /// Glide modulator for smooth pitch transitions between notes.
 ///
 /// # Contract
-/// - Glide does NOT send NoteOn/NoteOff for the `from` or `to` notes passed as arguments.
-/// - The caller (Glider) is responsible for managing the active state of user-held notes.
-/// - Glide only manages intermediate notes triggered during the glide animation.
-/// - The caller must send NoteOn for the destination note BEFORE starting the glide.
+/// - Glide sends all NoteOn/NoteOff messages it needs, including for the destination note.
+/// - All messages from Glide are marked as synthetic, so the Glider can filter them appropriately.
+/// - Glider filters out synthetic NoteOff messages for user-held notes.
+/// - The animation is free to send whatever MIDI messages it needs for smooth transitions.
 #[derive(Debug)]
 pub struct Glide {
     ch: Channel,
@@ -44,7 +45,7 @@ impl Glide {
             ch,
             from,
             to,
-            active_note: 0,
+            active_note: from,
         }
     }
 
@@ -96,20 +97,17 @@ impl Modulation for Glide {
         }
 
         if new_active_note != self.active_note {
-            // Only send NoteOn for intermediate notes, not the destination
-            // (Glider already sent NoteOn for the destination before starting animation)
-            if new_active_note != self.to {
-                let _ = messages.push(MidiMsg::ChannelVoice {
-                    channel: self.ch,
-                    msg: ChannelVoiceMsg::NoteOn {
-                        note: new_active_note,
-                        velocity: DEFAULT_VELOCITY,
-                    },
-                });
-            }
+            // Send NoteOn for the new active note (including destination)
+            let _ = messages.push(MidiMsg::ChannelVoice {
+                channel: self.ch,
+                msg: ChannelVoiceMsg::NoteOn {
+                    note: new_active_note,
+                    velocity: DEFAULT_VELOCITY,
+                },
+            });
 
             // Send NoteOff for the previous note
-            // Glider will filter these out for user-held notes, but allows cleanup of intermediate notes
+            // Glider will filter out synthetic NoteOff messages for user-held notes
             if self.active_note != 0 {
                 let _ = messages.push(MidiMsg::ChannelVoice {
                     channel: self.ch,
@@ -119,7 +117,7 @@ impl Modulation for Glide {
                     },
                 });
             }
-            
+
             self.active_note = new_active_note;
         }
 
@@ -129,18 +127,22 @@ impl Modulation for Glide {
     }
 
     fn reset(&mut self) -> Messages {
+        let mut messages = Vec::<MidiMsg, 3>::new();
+
+        // Send NoteOff for the currently active note (if any)
+        if self.active_note != 0 {
+            let _ = messages.push(MidiMsg::ChannelVoice {
+                channel: self.ch,
+                msg: ChannelVoiceMsg::NoteOff {
+                    note: self.active_note,
+                    velocity: 0,
+                },
+            });
+        }
+
         self.active_note = self.from;
 
-        let mut messages = Vec::<MidiMsg, 3>::new();
-        // let _ = messages.push(MidiMsg::ChannelVoice {
-        //     channel: self.ch,
-        //     msg: ChannelVoiceMsg::NoteOn {
-        //         note: self.from,
-        //         velocity: DEFAULT_VELOCITY,
-        //     },
-        // });
-        //
-        // Also send an initial pitch bend message (which is 0.0, or center)
+        // Reset pitch bend to center
         let _ = messages.push(MidiMsg::ChannelVoice {
             channel: self.ch,
             msg: ChannelVoiceMsg::PitchBend {
@@ -151,7 +153,3 @@ impl Modulation for Glide {
         Some(messages)
     }
 }
-
-
-
-

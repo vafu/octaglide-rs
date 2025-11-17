@@ -282,6 +282,7 @@ Current architecture is solid but open to suggestions. Potential considerations:
 
 - keep commit messages short, just a few words to summarize the change.
 - for commit messages use tags in square brackets to reflect status of the change, like `[WIP]`, `[Feature]`, etc.
+- don't include "Generated with Claude code", or any extra info. whole commit message should be just a few words. 
 
 ---
 

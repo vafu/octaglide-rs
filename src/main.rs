@@ -64,6 +64,7 @@ mod app {
     const HEAP_SIZE: usize = 1024;
     const MIDI_BAUD: u32 = 31250;
     const MIDI_CHANNEL_CAPACITY: usize = 16;
+    const CORE_INPUT_CHANNEL_CAPACITY: usize = 16;
 
     pub(crate) static mut POLLER: Option<logging::Poller> = None;
 
@@ -75,8 +76,8 @@ mod app {
     #[local]
     struct Local {
         led: board::Led,
+        core: Core,
         // poller: logging::Poller,
-        engine: Core,
     }
 
     pub struct Dispatcher {
@@ -128,29 +129,33 @@ mod app {
             POLLER = Some(poller);
         });
 
-        let (s, r) = make_channel!(MidiMsg, MIDI_CHANNEL_CAPACITY);
-        let (engine, es) = Engine::new();
+        let (midi_sender, midi_receiver) = make_channel!(MidiMsg, MIDI_CHANNEL_CAPACITY);
+        let (engine, engine_sender) = Engine::new();
+        let (core_input_sender, core_input_receiver) =
+            make_channel!(CoreIn, CORE_INPUT_CHANNEL_CAPACITY);
+
+        let core_input_sender_clone = core_input_sender.clone();
+        let core_input_sender_for_midi = core_input_sender.clone();
 
         let dispatcher = Dispatcher {
-            midi_sender: s,
-            engine_sender: es,
+            midi_sender,
+            engine_sender,
         };
 
-        midi_dispatch::spawn(r).unwrap();
-        animate::spawn(engine).unwrap();
+        midi_dispatch::spawn(midi_receiver).unwrap();
+        animate::spawn(engine, core_input_sender_clone).unwrap();
+        core_task::spawn(core_input_receiver).ok();
 
         (
             Shared {
-                midi_bus: MidiBus::new(prepare_uart(lpuart6, pins.p1, pins.p0), |res| {
-                    use crate::core::MidiEvent;
-                    if let Err(e) = process_input::spawn(CoreIn::Process(MidiEvent::from_user(res))) {
-                        log::error!("[Main:CoreIn] {:?}", e);
-                    }
-                }),
+                midi_bus: MidiBus::new(
+                    prepare_uart(lpuart6, pins.p1, pins.p0),
+                    core_input_sender_for_midi,
+                ),
             },
             Local {
                 led: board::led(&mut gpio2, pins.p13),
-                engine: Core::new(dispatcher),
+                core: Core::new(dispatcher),
             },
         )
     }
@@ -197,22 +202,35 @@ mod app {
         }
     }
     #[task(priority = 2)]
-    async fn animate(_ctx: animate::Context, mut engine: Engine) -> ! {
+    async fn animate(
+        _cx: animate::Context,
+        mut engine: Engine,
+        mut sender: Sender<'static, CoreIn, CORE_INPUT_CHANNEL_CAPACITY>,
+    ) -> ! {
         use crate::core::MidiEvent;
         loop {
             if let Some(msgs) = engine.tick().await {
                 for msg in msgs {
-                    if let Err(e) = process_input::spawn(CoreIn::Process(MidiEvent::synthetic(msg))) {
-                        log::error!("[Animate] {:?}", e);
-                    }
+                    sender
+                        .send(CoreIn::Process(MidiEvent::synthetic(msg)))
+                        .await
+                        .ok();
                 }
             }
         }
     }
 
-    #[task(local = [engine], priority = 1)]
-    async fn process_input(cx: process_input::Context, input: CoreIn) {
-        cx.local.engine.process(input).await;
+    #[task(local = [core], priority = 1)]
+    async fn core_task(
+        cx: core_task::Context,
+        mut receiver: Receiver<'static, CoreIn, CORE_INPUT_CHANNEL_CAPACITY>,
+    ) -> ! {
+        let core = cx.local.core;
+        loop {
+            if let Ok(input) = receiver.recv().await {
+                core.process(input).await;
+            }
+        }
     }
 
     #[task(local = [led], priority = 1)]
@@ -235,7 +253,3 @@ mod app {
         }
     }
 }
-
-
-
-

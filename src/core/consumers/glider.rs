@@ -1,4 +1,5 @@
 use heapless::Vec;
+use log::info;
 use midi_msg::{
     Channel,
     ChannelVoiceMsg::{self, *},
@@ -10,10 +11,7 @@ use crate::{
         engine::Cmd,
         modulators::{Glide, Modulator},
     },
-    core::{
-        Output::*,
-        consumers::CoreOutput,
-    },
+    core::{Output::*, consumers::CoreOutput},
 };
 
 const MAX_HELD_NOTES: usize = 8;
@@ -34,18 +32,18 @@ impl Glider {
         let from_note = self.held_notes.last().cloned();
         self.held_notes.push(note).unwrap();
 
-        // Always send NoteOn for the new note first
-        res.push(SendMidi(MidiMsg::ChannelVoice {
-            channel,
-            msg: ChannelVoiceMsg::NoteOn { note, velocity },
-        }))
-        .ok();
-
-        // Then start glide animation if there was a previous note
         if let Some(from) = from_note {
+            // Start glide animation - it will handle the smooth transition
             res.push(Animate(Cmd::Start(Modulator::Glide(Glide::new(
                 channel, from, note,
             )))))
+            .ok();
+        } else {
+            // No previous note - send NoteOn for the first note
+            res.push(SendMidi(MidiMsg::ChannelVoice {
+                channel,
+                msg: ChannelVoiceMsg::NoteOn { note, velocity },
+            }))
             .ok();
         }
     }
@@ -60,28 +58,23 @@ impl Glider {
         let Some(pos) = self.held_notes.iter().position(|&n| n == note) else {
             return;
         };
+
+        let was_active = pos == self.held_notes.len() - 1;
         let released_note = self.held_notes.remove(pos);
-        if let Some(&old_note) = self.held_notes.last() {
-            // Check if the note we released was the *active* one
-            if pos == self.held_notes.len() {
-                // if we have some held notes -- slide back to previous
-                let _ = res.push(Animate(Cmd::Start(Modulator::Glide(Glide::new(
-                    channel,
-                    released_note,
-                    old_note,
-                )))));
-                res.push(SendMidi(MidiMsg::ChannelVoice {
-                    channel,
-                    msg: ChannelVoiceMsg::NoteOff {
-                        note: released_note,
-                        velocity: 100,
-                    },
-                }))
-                .ok();
-            }
+
+        if let Some(&last_held) = self.held_notes.last()
+            && was_active
+        {
+            // If we released the active note, slide back to the previous held note
+            let _ = res.push(Animate(Cmd::Start(Modulator::Glide(Glide::new(
+                channel,
+                released_note,
+                last_held,
+            )))));
+            info!("sliding from {} back to {}", released_note, last_held);
         } else {
-            // --- All Notes Off ---
-            // This was the last note. Forward the NoteOff and stop the engine.
+            info!("canceling anim");
+            // No more held notes - send the final NoteOff and stop animation
             res.push(SendMidi(midi_msg.clone())).unwrap();
             res.push(Animate(Cmd::Stop)).unwrap();
         }
@@ -100,26 +93,33 @@ impl super::Consumer for Glider {
             return res;
         };
 
+        // Synthetic messages: pass through with filtering
+        if event.synthetic {
+            match msg {
+                NoteOff { note, .. } => {
+                    // Filter out NoteOff for held notes, allow for intermediate notes
+                    if !self.held_notes.contains(note) {
+                        res.push(SendMidi(midi_msg.clone())).ok();
+                    } else {
+                        info!("skip removing {}", note);
+                    }
+                }
+                _ => {
+                    // Pass through all other synthetic messages (NoteOn, PitchBend, etc.)
+                    res.push(SendMidi(midi_msg.clone())).ok();
+                }
+            }
+            return res;
+        }
+
+        // User messages: process normally
         match msg {
             NoteOn { note, velocity } => {
-                // Only process user NoteOn, not synthetic
-                if !event.synthetic {
-                    self.handle_note_on(*channel, *note, *velocity, &mut res);
-                }
+                self.handle_note_on(*channel, *note, *velocity, &mut res);
             }
 
             NoteOff { note, .. } => {
-                if event.synthetic {
-                    // Filter out synthetic NoteOff for held notes
-                    if self.held_notes.contains(note) {
-                        return res; // Filtered out
-                    }
-                    // Allow synthetic NoteOff for non-held notes (intermediate notes)
-                    res.push(SendMidi(midi_msg.clone())).ok();
-                } else {
-                    // User NoteOff - always process
-                    self.handle_note_off(*channel, *note, midi_msg, &mut res);
-                }
+                self.handle_note_off(*channel, *note, midi_msg, &mut res);
             }
 
             _ => {}
@@ -127,6 +127,3 @@ impl super::Consumer for Glider {
         res
     }
 }
-
-
-

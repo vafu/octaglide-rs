@@ -1,9 +1,10 @@
 use heapless::Deque;
 use log::info;
-use midi_msg::{MidiMsg, ParseError, ReceiverContext};
+use midi_msg::{MidiMsg, ReceiverContext};
+use rtic_sync::channel::Sender;
 use teensy4_bsp::{hal::lpuart::Status, ral};
 
-use crate::app::MidiUart;
+use crate::{app::MidiUart, core::Input as CoreIn};
 
 // TODO: consider changing midi BAUD (elektron Turbo), might need to update buf size.
 const MIDI_BUF_SIZE: usize = 32;
@@ -17,14 +18,14 @@ pub struct MidiBus {
     rx_ctx: ReceiverContext,
     rx_buf: Deque<u8, MIDI_BUF_SIZE>,
 
-    on_message: fn(Result<MidiMsg, ParseError>),
+    core_sender: Sender<'static, CoreIn, 16>,
 }
 
 impl MidiBus {
-    pub fn new(uart: MidiUart, on_message: fn(Result<MidiMsg, ParseError>)) -> Self {
+    pub fn new(uart: MidiUart, core_sender: Sender<'static, CoreIn, 16>) -> Self {
         Self {
             uart,
-            on_message,
+            core_sender,
             tx_ctx: None,
             tx_buf: Deque::new(),
             rx_ctx: ReceiverContext::new(),
@@ -48,7 +49,11 @@ impl MidiBus {
 
                 match MidiMsg::from_midi_with_context(slice, &mut self.rx_ctx) {
                     Ok((msg, len)) => {
-                        (self.on_message)(Ok(msg));
+                        use crate::core::MidiEvent;
+                        let input = CoreIn::Process(MidiEvent::from_user(Ok(msg)));
+                        if let Err(e) = self.core_sender.try_send(input) {
+                            log::error!("[MidiBus:CoreIn] {:?}", e);
+                        }
                         self.drain_rx_queue(len);
                     }
 
@@ -57,7 +62,11 @@ impl MidiBus {
                     }
 
                     Err(e) => {
-                        (self.on_message)(Err(e));
+                        use crate::core::MidiEvent;
+                        let input = CoreIn::Process(MidiEvent::from_user(Err(e)));
+                        if let Err(e) = self.core_sender.try_send(input) {
+                            log::error!("[MidiBus:CoreIn] {:?}", e);
+                        }
                         self.drain_rx_queue(1);
                     }
                 }
@@ -76,7 +85,30 @@ impl MidiBus {
     }
 
     pub fn send(&mut self, msg: &MidiMsg) {
-        info!(">>> {:?}", msg);
+        // Format and log message (skip PitchBend)
+        if let MidiMsg::ChannelVoice {
+            msg: voice_msg, ..
+        } = msg
+        {
+            let formatted = match voice_msg {
+                midi_msg::ChannelVoiceMsg::NoteOn { note, velocity } => Some(format!(
+                    ">>> NoteOn {} vel={}",
+                    note, velocity
+                )),
+                midi_msg::ChannelVoiceMsg::NoteOff { note, velocity } => Some(format!(
+                    ">>> NoteOff {} vel={}",
+                    note, velocity
+                )),
+                midi_msg::ChannelVoiceMsg::PitchBend { .. } => None,
+                _ => Some(format!(">>> {:?}", voice_msg)),
+            };
+            if let Some(msg) = formatted {
+                info!("{}", msg);
+            }
+        } else {
+            info!(">>> {:?}", msg);
+        }
+
         let bytes = msg.to_midi();
         let is_channel_msg = msg.is_channel_mode();
         let ctx = bytes[0];
@@ -113,3 +145,4 @@ impl MidiBus {
         }
     }
 }
+

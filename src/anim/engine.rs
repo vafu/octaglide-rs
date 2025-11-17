@@ -1,4 +1,5 @@
 use futures::FutureExt;
+use log::info;
 use rtic_monotonics::{
     Monotonic,
     systick::{ExtU32, Systick, fugit::Instant},
@@ -79,6 +80,7 @@ impl Engine {
                         self.state = if self.looping {
                             State::Animating { last_updated: now, progress_at: 0.0 }
                         } else {
+                            info!("anim end");
                             State::Idle
                         };
                     } else {
@@ -100,12 +102,27 @@ impl Engine {
         };
         match cmd {
             Cmd::Start(modulator) => {
+                // Reset the old modulator before replacing it
+                let mut messages = if let Some(old_mod) = self.modulator.as_mut() {
+                    old_mod.reset().unwrap_or(heapless::Vec::new())
+                } else {
+                    heapless::Vec::new()
+                };
+
                 self.state = State::Animating {
                     last_updated: Systick::now(),
                     progress_at: 0.0,
                 };
                 self.modulator = Some(modulator);
-                self.modulator.as_mut()?.animate(0.0, 0.0, 0.0)
+
+                // Append initial animation messages to reset messages
+                if let Some(new_msgs) = self.modulator.as_mut()?.animate(0.0, 0.0, 0.0) {
+                    for msg in new_msgs {
+                        let _ = messages.push(msg);
+                    }
+                }
+
+                Some(messages)
             }
             Cmd::Stop => match self.state {
                 State::Animating { .. } => {
