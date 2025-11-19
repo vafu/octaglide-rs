@@ -228,14 +228,17 @@ Current architecture is solid but open to suggestions. Potential considerations:
 ## When Helping with This Project
 
 ### DO:
+- **ALWAYS create tasks in Backlog.md BEFORE starting new features** - Use `mcp__backlog__task_create` to document what you're building
+- Search existing tasks first with `mcp__backlog__task_search` to avoid duplicates
 - Follow the `no_std` embedded patterns
 - Use `heapless` collections where possible
-- Keep allocations minimal (limited 1KB heap)
+- Avoid heap allocations wherever possible. Remember the heap limit is 1KB.
 - Respect RTIC task priorities and shared resource locking
 - Log extensively for debugging (USB logging is available)
 - Consider real-time constraints (MIDI timing is critical)
 
 ### DON'T:
+- Start implementing new features without creating a task first
 - Use `std` library features
 - Perform blocking operations in high-priority tasks
 - Allocate large amounts of memory
@@ -270,7 +273,7 @@ Current architecture is solid but open to suggestions. Potential considerations:
 - `src/midi.rs` - be very careful, timing-critical code
 - Test thoroughly with real hardware
 
-## Dependencies of Note
+## Dependencies
 
 - `rtic`: Real-time framework (v2, thumbv7 backend)
 - `teensy4-bsp`: Board support package for Teensy 4.x
@@ -303,8 +306,32 @@ Current architecture is solid but open to suggestions. Potential considerations:
 - Hardware changes
 
 
+<!-- BACKLOG.MD MCP GUIDELINES START -->
 
+<CRITICAL_INSTRUCTION>
 
+## BACKLOG WORKFLOW INSTRUCTIONS
 
+This project uses Backlog.md MCP for all task and project management activities.
 
+**CRITICAL GUIDANCE**
+
+- If your client supports MCP resources, read `backlog://workflow/overview` to understand when and how to use Backlog for this project.
+- If your client only supports tools or the above request fails, call `backlog.get_workflow_overview()` tool to load the tool-oriented overview (it lists the matching guide tools).
+
+- **First time working here?** Read the overview resource IMMEDIATELY to learn the workflow
+- **Already familiar?** You should have the overview cached ("## Backlog.md Overview (MCP)")
+- **When to read it**: BEFORE creating tasks, or when you're unsure whether to track work
+
+These guides cover:
+- Decision framework for when to create tasks
+- Search-first workflow to avoid duplicates
+- Links to detailed guides for task creation, execution, and completion
+- MCP tools reference
+
+You MUST read the overview resource to understand the complete workflow. The information is NOT summarized here.
+
+</CRITICAL_INSTRUCTION>
+
+<!-- BACKLOG.MD MCP GUIDELINES END -->
 

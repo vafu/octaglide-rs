@@ -88,8 +88,6 @@ mod app {
         // poller: logging::Poller,
     }
 
-
-
     #[global_allocator]
     static HEAP: Heap = Heap::empty();
     fn init_heap() {
@@ -222,6 +220,3 @@ mod app {
         }
     }
 }
-
-
-
