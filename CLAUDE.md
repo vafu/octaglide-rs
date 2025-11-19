@@ -227,6 +227,22 @@ Current architecture is solid but open to suggestions. Potential considerations:
 
 ## When Helping with This Project
 
+### Planning & Task Management Workflow
+
+**When planning new features or initiatives:**
+1. **Read workflow guides first**: Use `mcp__backlog__get_workflow_overview` and `mcp__backlog__get_task_creation_guide`
+2. **Assess scope**: Determine if work is single task or needs parent/subtask structure
+3. **Use parent tasks for epics**: Large initiatives (UI system, arpeggiator) should be parent tasks with subtasks
+4. **Create task hierarchy**: Use `parentTaskId` parameter to link subtasks to parent
+5. **Document relationships**: Use `dependencies` field to track task ordering
+6. **Search first**: Always check for existing tasks with `mcp__backlog__task_search` before creating new ones
+7. **Explain structure**: After creating tasks, explain the hierarchy and relationships to user
+
+**Multi-task structure guidelines:**
+- **Use subtasks** when: Multiple tasks modify same component, tightly coupled, sequential phases
+- **Use separate tasks** when: Different subsystems, can be worked independently, loose coupling
+- **Always create**: Parent task first, then all subtasks in same session
+
 ### DO:
 - **ALWAYS create tasks in Backlog.md BEFORE starting new features** - Use `mcp__backlog__task_create` to document what you're building
 - Search existing tasks first with `mcp__backlog__task_search` to avoid duplicates
@@ -239,6 +255,8 @@ Current architecture is solid but open to suggestions. Potential considerations:
 
 ### DON'T:
 - Start implementing new features without creating a task first
+- Create tasks without reading workflow guides during planning
+- Create single monolithic tasks for multi-component work
 - Use `std` library features
 - Perform blocking operations in high-priority tasks
 - Allocate large amounts of memory
@@ -334,4 +352,5 @@ You MUST read the overview resource to understand the complete workflow. The inf
 </CRITICAL_INSTRUCTION>
 
 <!-- BACKLOG.MD MCP GUIDELINES END -->
+
 
