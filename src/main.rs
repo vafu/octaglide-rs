@@ -132,9 +132,11 @@ mod app {
         } = brd(cx.device);
         let mut core = cx.core;
         let led = board::led(&mut gpio2, pins.p13);
+
         core.DCB.enable_trace();
         core.DWT.enable_cycle_counter();
         unsafe { cpp_init() };
+
         init_heap();
         Systick::start(
             core.SYST,

@@ -60,17 +60,17 @@ extern "C" volatile uint32_t systick_millis_count = 0;
 extern "C" void cpp_tick() { systick_millis_count++; }
 
 // --- 5. EXPOSED API ---
-USBHost *myusb = nullptr;
-USBHub *hub1 = nullptr;
-MIDIDevice *midi1 = nullptr;
+// 1. Static Allocation (No Heap required, memory reserved at compile time)
+USBHost myusb_static;
+USBHub hub1_static(myusb_static);
+MIDIDevice midi_static(myusb_static);
+
+// 2. Global Pointers (If you really want to use pointers)
+USBHost *myusb = &myusb_static;
+MIDIDevice *midi = &midi_static;
 extern "C" {
 
-void cpp_init() {
-  myusb = new USBHost();
-  hub1 = new USBHub(*myusb);
-  midi1 = new MIDIDevice(*myusb);
-  myusb->begin();
-}
+void cpp_init() { myusb->begin(); }
 void cpp_task() {
   if (myusb)
     myusb->Task();
@@ -81,10 +81,10 @@ void cpp_usb_isr() {
 }
 
 int cpp_read_midi(uint8_t *type, uint8_t *d1, uint8_t *d2) {
-  if (midi1 && midi1->read()) {
-    *type = midi1->getType();
-    *d1 = midi1->getData1();
-    *d2 = midi1->getData2();
+  if (midi && midi->read()) {
+    *type = midi->getType();
+    *d1 = midi->getData1();
+    *d2 = midi->getData2();
     return 1;
   }
   return 0;
