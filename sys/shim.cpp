@@ -70,7 +70,6 @@ void cpp_init() {
   hub1 = new USBHub(*myusb);
   midi1 = new MIDIDevice(*myusb);
   myusb->begin();
-  midi1->begin();
 }
 void cpp_task() {
   if (myusb)
