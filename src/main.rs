@@ -38,7 +38,7 @@ mod app {
         core::{Core, Input as CoreIn, MidiEvent},
         midi::MidiBus,
     };
-    use board::t40 as brd;
+    use board::t41 as brd;
     use embedded_alloc::LlffHeap as Heap;
     use imxrt_log as logging;
     use midi_msg::MidiMsg;
