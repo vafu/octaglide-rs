@@ -25,6 +25,9 @@ libm = "0.2.15"
 version = "0.5"
 features = ["rt"]
 
+[build-dependencies]
+cc = "1.0"
+
 # Don't optimize build dependencies, like proc macros.
 # Helps with build times.
 [profile.release.build-override]

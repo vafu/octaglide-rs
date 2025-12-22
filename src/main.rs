@@ -30,15 +30,40 @@ mod midi_fmt;
 #[macro_use]
 extern crate alloc;
 
+// Link to C++
+unsafe extern "C" {
+    fn cpp_init();
+    fn cpp_task();
+    fn cpp_read_midi(type_: *mut u8, d1: *mut u8, d2: *mut u8) -> i32;
+}
+
+// Global timer for millis()
+static mut SYSTICK_CNT: u32 = 0;
+
+#[unsafe(no_mangle)]
+pub extern "C" fn rust_millis() -> u32 {
+    unsafe { SYSTICK_CNT }
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn rust_delay(ms: u32) {
+    let start = unsafe { SYSTICK_CNT };
+    while unsafe { SYSTICK_CNT } - start < ms {
+        cortex_m::asm::nop();
+    }
+}
+
 #[rtic::app(device = teensy4_bsp, peripherals = true, dispatchers = [KPP, GPT1])]
 mod app {
 
     use crate::{
         anim::animator::{Animator, Cmd},
         core::{Core, Input as CoreIn, MidiEvent},
+        cpp_init,
         midi::MidiBus,
     };
     use board::t41 as brd;
+    use cortex_m::asm::delay;
     use embedded_alloc::LlffHeap as Heap;
     use imxrt_log as logging;
     use midi_msg::MidiMsg;
@@ -105,9 +130,14 @@ mod app {
             lpuart6,
             ..
         } = brd(cx.device);
+        let mut core = cx.core;
+        let led = board::led(&mut gpio2, pins.p13);
+        core.DCB.enable_trace();
+        core.DWT.enable_cycle_counter();
+        unsafe { cpp_init() };
         init_heap();
         Systick::start(
-            cx.core.SYST,
+            core.SYST,
             board::ARM_FREQUENCY,
             rtic_monotonics::create_systick_token!(),
         );
@@ -132,7 +162,7 @@ mod app {
                 ),
             },
             Local {
-                led: board::led(&mut gpio2, pins.p13),
+                led,
                 core: Core::new(midi_sender, animator_sender),
             },
         )
