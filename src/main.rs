@@ -34,22 +34,88 @@ extern crate alloc;
 unsafe extern "C" {
     fn cpp_init();
     fn cpp_task();
-    fn cpp_read_midi(type_: *mut u8, d1: *mut u8, d2: *mut u8) -> i32;
+    fn cpp_usb_isr();
+    fn cpp_send_note_on(note: u8, velocity: u8, channel: u8);
+    fn cpp_send_note_off(note: u8, velocity: u8, channel: u8);
+    fn cpp_midi_connected() -> i32;
+    fn cpp_midi_get_device_info(vendor: *mut u16, product: *mut u16);
+    fn cpp_debug_status();
+    fn cpp_recheck_power();
+    fn cpp_verify_clocks();
+    fn cpp_configure_usb_power();
 }
 
-// Global timer for millis()
-static mut SYSTICK_CNT: u32 = 0;
+// Expose Rust time functions to C++
+use rtic_monotonics::{
+    Monotonic,
+    systick::{Systick, fugit},
+};
 
 #[unsafe(no_mangle)]
-pub extern "C" fn rust_millis() -> u32 {
-    unsafe { SYSTICK_CNT }
+pub extern "C" fn rust_micros() -> u32 {
+    Systick::now().duration_since_epoch().to_micros()
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn rust_delay(ms: u32) {
-    let start = unsafe { SYSTICK_CNT };
-    while unsafe { SYSTICK_CNT } - start < ms {
-        cortex_m::asm::nop();
+pub extern "C" fn rust_log_info(msg: *const u8) {
+    use ::core::{slice, str};
+    if !msg.is_null() {
+        unsafe {
+            let mut len = 0;
+            while *msg.add(len) != 0 {
+                len += 1;
+            }
+            if let Ok(s) = str::from_utf8(slice::from_raw_parts(msg, len)) {
+                log::info!("[C++] {}", s);
+            }
+        }
+    }
+}
+
+// Parse USB MIDI message from USBHost_t36 format
+// The USBHost library returns: type (status), data1, data2
+fn parse_usb_midi(msg_type: u8, data1: u8, data2: u8) -> Option<midi_msg::MidiMsg> {
+    use midi_msg::{Channel, ChannelVoiceMsg, ControlChange, MidiMsg};
+
+    let status = msg_type & 0xF0;
+    let channel = Channel::from_u8(msg_type & 0x0F);
+
+    match status {
+        0x80 => Some(MidiMsg::ChannelVoice {
+            channel,
+            msg: ChannelVoiceMsg::NoteOff {
+                note: data1,
+                velocity: data2,
+            },
+        }),
+        0x90 => Some(MidiMsg::ChannelVoice {
+            channel,
+            msg: ChannelVoiceMsg::NoteOn {
+                note: data1,
+                velocity: data2,
+            },
+        }),
+        0xB0 => Some(MidiMsg::ChannelVoice {
+            channel,
+            msg: ChannelVoiceMsg::ControlChange {
+                control: ControlChange::CC {
+                    control: data1,
+                    value: data2,
+                },
+            },
+        }),
+        0xE0 => {
+            // Pitch bend: combine data1 (LSB) and data2 (MSB) into 14-bit value
+            let bend_value = ((data2 as u16) << 7) | (data1 as u16);
+            Some(MidiMsg::ChannelVoice {
+                channel,
+                msg: ChannelVoiceMsg::PitchBend { bend: bend_value },
+            })
+        }
+        _ => {
+            log::warn!("Unsupported USB MIDI type: {:02X}", msg_type);
+            None
+        }
     }
 }
 
@@ -59,13 +125,15 @@ mod app {
     use crate::{
         anim::animator::{Animator, Cmd},
         core::{Core, Input as CoreIn, MidiEvent},
-        cpp_init,
+        cpp_configure_usb_power, cpp_debug_status, cpp_init, cpp_midi_connected,
+        cpp_midi_get_device_info, cpp_recheck_power, cpp_send_note_off, cpp_send_note_on, cpp_task,
+        cpp_usb_isr, cpp_verify_clocks,
         midi::MidiBus,
     };
     use board::t41 as brd;
-    use cortex_m::asm::delay;
     use embedded_alloc::LlffHeap as Heap;
     use imxrt_log as logging;
+    use log::info;
     use midi_msg::MidiMsg;
     use rtic_monotonics::systick::{Systick, *};
     use rtic_sync::{
@@ -75,7 +143,9 @@ mod app {
     use teensy4_bsp::{
         board,
         hal::{
+            gpio::Port,
             iomuxc::{
+                self,
                 consts::Const,
                 lpuart::{self, Pin, Rx, Tx},
             },
@@ -123,19 +193,26 @@ mod app {
 
     #[init]
     fn init(cx: init::Context) -> (Shared, Local) {
+        let mut instances: board::Instances = cx.device.into();
+
         let board::Resources {
             mut gpio2,
-            pins,
+            mut gpio3,
+            mut pins,
             usb,
             lpuart6,
             ..
-        } = brd(cx.device);
-        let mut core = cx.core;
-        let led = board::led(&mut gpio2, pins.p13);
+        } = brd(instances);
 
-        core.DCB.enable_trace();
-        core.DWT.enable_cycle_counter();
-        unsafe { cpp_init() };
+        let mut core = cx.core;
+        let mut led = board::led(&mut gpio2, pins.p13);
+
+        const PIN_CONFIG: iomuxc::Config =
+            iomuxc::Config::zero()
+            .set_drive_strength(iomuxc::DriveStrength::R0_7);
+        iomuxc::configure(&mut pins.p28, PIN_CONFIG);
+        let output = gpio3.output(pins.p28);
+        output.set();
 
         init_heap();
         Systick::start(
@@ -143,6 +220,7 @@ mod app {
             board::ARM_FREQUENCY,
             rtic_monotonics::create_systick_token!(),
         );
+
         let poller = logging::log::usbd(usb, logging::Interrupts::Enabled).unwrap();
         crate::interrupt::free(|_| unsafe {
             POLLER = Some(poller);
@@ -155,6 +233,7 @@ mod app {
         midi_dispatch::spawn(midi_receiver).unwrap();
         animate::spawn(animator, core_sender.clone()).unwrap();
         core_task::spawn(core_receiver).ok();
+        usb_host_init::spawn(core_sender.clone()).ok();
 
         (
             Shared {
@@ -236,7 +315,7 @@ mod app {
     async fn blink_led(cx: blink_led::Context) {
         let led = cx.local.led;
         led.set();
-        Systick::delay(1.millis()).await;
+        Systick::delay(100.millis()).await;
         led.clear();
     }
 
@@ -249,6 +328,108 @@ mod app {
                     p.poll();
                 }
             });
+        }
+    }
+
+    #[task(binds = USB_OTG2, priority = 2)]
+    fn usb_host_isr(_cx: usb_host_isr::Context) {
+        unsafe {
+            cpp_usb_isr();
+        }
+    }
+
+    #[task(priority = 1)]
+    #[allow(static_mut_refs)]
+    async fn usb_host_init(_cx: usb_host_init::Context, sender: CoreSender) {
+        info!("usb_host_init: waiting 3 seconds for USB logging to be ready...");
+        Systick::delay(3000.millis()).await;
+
+        unsafe {
+            cpp_init();
+        };
+        usb_host_test::spawn(sender).ok();
+    }
+
+    #[task(priority = 2)]
+    async fn usb_host_test(_cx: usb_host_test::Context, _sender: CoreSender) -> ! {
+        info!("usb_host_test: starting USB MIDI output test loop");
+
+        let mut note = 60u8; // Start at middle C
+        let channel = 1; // MIDI channel 1 (0-indexed)
+        let velocity = 100;
+        let mut last_connected = false;
+        let mut note_timer = 0u32; // Count poll cycles for note timing
+        let mut debug_timer = 0u32; // For periodic debug output
+        let mut gpio_check_timer = 0u32; // For GPIO verification
+
+        loop {
+            unsafe {
+                cpp_task(); // Drive the C++ USBHost state machine
+            }
+
+            // Check connection status
+            let connected = unsafe { cpp_midi_connected() == 1 };
+
+            if connected != last_connected {
+                if connected {
+                    let mut vendor: u16 = 0;
+                    let mut product: u16 = 0;
+                    unsafe {
+                        cpp_midi_get_device_info(&mut vendor, &mut product);
+                    }
+                    info!(
+                        "USB MIDI device CONNECTED - VID:{:04X} PID:{:04X}",
+                        vendor, product
+                    );
+                    note_timer = 0; // Reset timer on connect
+                } else {
+                    info!("USB MIDI device DISCONNECTED");
+                }
+                last_connected = connected;
+            }
+
+            // Only send notes if device is connected
+            if connected {
+                note_timer += 1;
+
+                // Send note every 100 polls (~1 second at 10ms intervals)
+                if note_timer == 1 {
+                    unsafe {
+                        info!(
+                            "Sending USB MIDI: NoteOn  note={} vel={} ch={}",
+                            note, velocity, channel
+                        );
+                        cpp_send_note_on(note, velocity, channel);
+                    }
+                } else if note_timer == 50 {
+                    unsafe {
+                        info!(
+                            "Sending USB MIDI: NoteOff note={} vel={} ch={}",
+                            note, velocity, channel
+                        );
+                        cpp_send_note_off(note, velocity, channel);
+                    }
+                } else if note_timer >= 100 {
+                    // Move to next note (cycle through C major scale)
+                    note = match note {
+                        60 => 62, // C -> D
+                        62 => 64, // D -> E
+                        64 => 65, // E -> F
+                        65 => 67, // F -> G
+                        67 => 69, // G -> A
+                        69 => 71, // A -> B
+                        71 => 72, // B -> C
+                        _ => 60,  // C (octave up) -> back to C
+                    };
+                    note_timer = 0; // Reset for next note
+                }
+            }
+
+            // Call Task() as fast as possible - no delay
+            // Yield to other tasks occasionally
+            if (note_timer % 1000) == 0 {
+                Systick::delay(500.millis()).await;
+            }
         }
     }
 }

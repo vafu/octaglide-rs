@@ -21,6 +21,7 @@ fn main() {
         .define("TEENSYDUINO", "159")
         .define("ARDUINO", "10810")
         .define("F_CPU", "600000000")
+        // .define("USBHOST_PRINT_DEBUG", None) // Enable USBHost debug printing (disabled - needs printf)
         .flag("-D__IMXRT1062__") // Chip ID
         .flag("-DUSB_MIDI") // Enable MIDI mode
         // Compiler Flags

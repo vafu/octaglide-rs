@@ -15,15 +15,22 @@ log = { version = "0.4"}
 midi-msg = { version = "0.8", default-features = false }
 embedded-alloc = "0.6.0"
 cortex-m = "0.7.7"
+cortex-m-microclock = "0.1"
 heapless = "0.9.1"
 paste = "1.0"
 futures = { version = "0.3", default-features = false }
 enum_dispatch = "0.3.13"
 libm = "0.2.15"
 
+imxrt-boot-gen = "0.3"
+
 [dependencies.teensy4-bsp]
 version = "0.5"
 features = ["rt"]
+
+[dependencies.teensy4-fcb]
+version = "0.4"
+
 
 [build-dependencies]
 cc = "1.0"
@@ -44,3 +51,7 @@ bench = false
 opt-level = "z"     # Optimize for size
 # debug = true        # Keep debug symbols
 # lto = "thin"        # Enable Link Time Optimization
+
+
+
+

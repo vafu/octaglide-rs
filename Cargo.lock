@@ -101,6 +101,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "cortex-m-microclock"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e0028e2fedd4cfd729a95fe47824913e646ba8f26f78df8bf8ca9c5aa0c48dc9"
+dependencies = [
+ "cortex-m",
+ "fugit",
+]
+
+[[package]]
 name = "cortex-m-rt"
 version = "0.7.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -545,10 +555,12 @@ version = "0.1.0"
 dependencies = [
  "cc",
  "cortex-m",
+ "cortex-m-microclock",
  "embedded-alloc",
  "enum_dispatch",
  "futures",
  "heapless 0.9.1",
+ "imxrt-boot-gen",
  "imxrt-log",
  "libm",
  "log",
@@ -558,6 +570,7 @@ dependencies = [
  "rtic-monotonics",
  "rtic-sync",
  "teensy4-bsp",
+ "teensy4-fcb",
  "teensy4-panic",
 ]
 

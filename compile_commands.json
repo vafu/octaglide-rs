@@ -1,0 +1,44 @@
+[
+  {
+    "directory": "/home/v47/proj/synths/octaglide-rs",
+    "command": "arm-none-eabi-g++ -c -DARDUINO_TEENSY41 -DTEENSYDUINO=159 -DARDUINO=10810 -DF_CPU=600000000 -D__IMXRT1062__ -DUSB_MIDI -w -fpermissive -fno-rtti -fno-exceptions -mthumb -mfloat-abi=hard -mfpu=fpv5-d16 -std=c++11 -Isys -Isys/core -Isys/USBHost_t36 -o sys/shim.o sys/shim.cpp",
+    "file": "sys/shim.cpp",
+    "output": "sys/shim.o"
+  },
+  {
+    "directory": "/home/v47/proj/synths/octaglide-rs",
+    "command": "arm-none-eabi-g++ -c -DARDUINO_TEENSY41 -DTEENSYDUINO=159 -DARDUINO=10810 -DF_CPU=600000000 -D__IMXRT1062__ -DUSB_MIDI -w -fpermissive -fno-rtti -fno-exceptions -mthumb -mfloat-abi=hard -mfpu=fpv5-d16 -std=c++11 -Isys -Isys/core -Isys/USBHost_t36 -o sys/USBHost_t36/ehci.o sys/USBHost_t36/ehci.cpp",
+    "file": "sys/USBHost_t36/ehci.cpp",
+    "output": "sys/USBHost_t36/ehci.o"
+  },
+  {
+    "directory": "/home/v47/proj/synths/octaglide-rs",
+    "command": "arm-none-eabi-g++ -c -DARDUINO_TEENSY41 -DTEENSYDUINO=159 -DARDUINO=10810 -DF_CPU=600000000 -D__IMXRT1062__ -DUSB_MIDI -w -fpermissive -fno-rtti -fno-exceptions -mthumb -mfloat-abi=hard -mfpu=fpv5-d16 -std=c++11 -Isys -Isys/core -Isys/USBHost_t36 -o sys/USBHost_t36/enumeration.o sys/USBHost_t36/enumeration.cpp",
+    "file": "sys/USBHost_t36/enumeration.cpp",
+    "output": "sys/USBHost_t36/enumeration.o"
+  },
+  {
+    "directory": "/home/v47/proj/synths/octaglide-rs",
+    "command": "arm-none-eabi-g++ -c -DARDUINO_TEENSY41 -DTEENSYDUINO=159 -DARDUINO=10810 -DF_CPU=600000000 -D__IMXRT1062__ -DUSB_MIDI -w -fpermissive -fno-rtti -fno-exceptions -mthumb -mfloat-abi=hard -mfpu=fpv5-d16 -std=c++11 -Isys -Isys/core -Isys/USBHost_t36 -o sys/USBHost_t36/hub.o sys/USBHost_t36/hub.cpp",
+    "file": "sys/USBHost_t36/hub.cpp",
+    "output": "sys/USBHost_t36/hub.o"
+  },
+  {
+    "directory": "/home/v47/proj/synths/octaglide-rs",
+    "command": "arm-none-eabi-g++ -c -DARDUINO_TEENSY41 -DTEENSYDUINO=159 -DARDUINO=10810 -DF_CPU=600000000 -D__IMXRT1062__ -DUSB_MIDI -w -fpermissive -fno-rtti -fno-exceptions -mthumb -mfloat-abi=hard -mfpu=fpv5-d16 -std=c++11 -Isys -Isys/core -Isys/USBHost_t36 -o sys/USBHost_t36/memory.o sys/USBHost_t36/memory.cpp",
+    "file": "sys/USBHost_t36/memory.cpp",
+    "output": "sys/USBHost_t36/memory.o"
+  },
+  {
+    "directory": "/home/v47/proj/synths/octaglide-rs",
+    "command": "arm-none-eabi-g++ -c -DARDUINO_TEENSY41 -DTEENSYDUINO=159 -DARDUINO=10810 -DF_CPU=600000000 -D__IMXRT1062__ -DUSB_MIDI -w -fpermissive -fno-rtti -fno-exceptions -mthumb -mfloat-abi=hard -mfpu=fpv5-d16 -std=c++11 -Isys -Isys/core -Isys/USBHost_t36 -o sys/USBHost_t36/print.o sys/USBHost_t36/print.cpp",
+    "file": "sys/USBHost_t36/print.cpp",
+    "output": "sys/USBHost_t36/print.o"
+  },
+  {
+    "directory": "/home/v47/proj/synths/octaglide-rs",
+    "command": "arm-none-eabi-g++ -c -DARDUINO_TEENSY41 -DTEENSYDUINO=159 -DARDUINO=10810 -DF_CPU=600000000 -D__IMXRT1062__ -DUSB_MIDI -w -fpermissive -fno-rtti -fno-exceptions -mthumb -mfloat-abi=hard -mfpu=fpv5-d16 -std=c++11 -Isys -Isys/core -Isys/USBHost_t36 -o sys/USBHost_t36/midi.o sys/USBHost_t36/midi.cpp",
+    "file": "sys/USBHost_t36/midi.cpp",
+    "output": "sys/USBHost_t36/midi.o"
+  }
+]

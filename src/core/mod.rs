@@ -28,6 +28,13 @@ impl MidiEvent {
             synthetic: true,
         }
     }
+
+    pub fn usb(msg: MidiMsg) -> Self {
+        Self {
+            msg: Ok(msg),
+            synthetic: false,
+        }
+    }
 }
 
 use crate::{
