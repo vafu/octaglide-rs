@@ -75,96 +75,14 @@ LoggingMIDIDevice *midi = nullptr;
 
 extern "C" {
 
-void cpp_configure_usb_power() {
-  rust_log_info("EARLY: Configuring USB host power...");
-
-  // Enable all necessary clocks
-  // CCM_CCGR4 |= CCM_CCGR4_IOMUXC(CCM_CCGR_ON);
-  // CCM_CCGR1 |= 0xFFFFFFFF;
-  // CCM_CCGR2 |= 0xFFFFFFFF;
-  // CCM_CCGR3 |= 0xFFFFFFFF;
-
-  // Configure IOMUXC
-  // IOMUXC_SW_MUX_CTL_PAD_GPIO_EMC_40 = 5;           // ALT5 = GPIO mode
-  // IOMUXC_SW_PAD_CTL_PAD_GPIO_EMC_40 = 0x0008;      // Drive strength
-
-  // Configure GPIO8
-  GPIO8_GDIR |= 1 << 26;  // Output
-  GPIO8_DR_SET = 1 << 26; // High
-
-  // Small delay to let pin stabilize
-  for (volatile int i = 0; i < 10000; i++) {
-  }
-
-  // Verify
-  if ((GPIO8_GDIR & (1 << 26)) && (GPIO8_DR & (1 << 26))) {
-    rust_log_info("EARLY: USB power configured and verified");
-    delay(10000);
-  } else {
-    rust_log_info("EARLY: ERROR - USB power config failed");
-  }
-}
-
-void cpp_verify_clocks() {
-  uint32_t ccgr3 = CCM_CCGR3;
-  rust_log_info("Pre-init: Verifying clock gates and pin config...");
-
-  // Check specific GPIO8 clock gate field (bits 16-17 of CCGR3)
-  uint32_t gpio8_cg = (ccgr3 >> 16) & 0x3; // CG8 = GPIO8
-
-  if (gpio8_cg == 0x3) {
-    rust_log_info("Pre-init: GPIO8 clock is ENABLED (0x3) - OK");
-  } else if (gpio8_cg == 0x0) {
-    rust_log_info("Pre-init: ERROR - GPIO8 clock is OFF (0x0)!");
-  } else {
-    rust_log_info("Pre-init: WARNING - GPIO8 clock in partial state!");
-  }
-
-  // Check IOMUXC configuration for GPIO_EMC_40
-  uint32_t mux = IOMUXC_SW_MUX_CTL_PAD_GPIO_EMC_40;
-  uint32_t pad = IOMUXC_SW_PAD_CTL_PAD_GPIO_EMC_40;
-
-  if ((mux & 0x7) == 5) {
-    rust_log_info("Pre-init: IOMUXC MUX = ALT5 (GPIO mode) - OK");
-  } else {
-    rust_log_info("Pre-init: ERROR - IOMUXC MUX NOT in GPIO mode!");
-  }
-
-  // Check PAD configuration
-  if (pad == 0x0008) {
-    rust_log_info("Pre-init: IOMUXC PAD = 0x0008 - OK");
-  } else if (pad == 0) {
-    rust_log_info("Pre-init: WARNING - IOMUXC PAD = 0x0000 (reset default)");
-  } else {
-    rust_log_info("Pre-init: WARNING - IOMUXC PAD has unexpected value");
-  }
-
-  // Check GPIO8 direction and data registers
-  uint32_t gdir = GPIO8_GDIR;
-  uint32_t dr = GPIO8_DR;
-
-  if (gdir & (1 << 26)) {
-    rust_log_info("Pre-init: GPIO8 direction = OUTPUT - OK");
-  } else {
-    rust_log_info("Pre-init: ERROR - GPIO8 direction = INPUT!");
-  }
-
-  if (dr & (1 << 26)) {
-    rust_log_info("Pre-init: GPIO8 data register = HIGH");
-  } else {
-    rust_log_info("Pre-init: GPIO8 data register = LOW");
-  }
-}
-
 void cpp_init() {
   rust_log_info("USB Host: Initializing");
 
-  // CRITICAL: Ensure GPIO8 peripheral clock is enabled
+  // Ensure GPIO8 peripheral clock is enabled (required for USB host power on T4.1)
   // The Rust BSP only initializes GPIO1-4, not GPIO6-9
-  rust_log_info("USB Host: Pre-enabling GPIO8 clock");
-  CCM_CCGR3 |= 0xFFFFFFFF; // Ensure GPIO6-9 clocks are ON
+  CCM_CCGR3 |= 0xFFFFFFFF;
 
-  // Create MIDI device driver NOW (after logging is ready)
+  // Create MIDI device driver (placement new into static storage)
   static uint8_t midi_storage[sizeof(LoggingMIDIDevice)]
       __attribute__((aligned(16)));
   midi_static_ptr = new (midi_storage) LoggingMIDIDevice(myusb_static);
@@ -179,9 +97,8 @@ void cpp_init() {
   rust_log_info("USB Host: Ready");
 }
 void cpp_task() {
-  if (myusb) {
-    myusb->Task();
-  }
+  if (myusb) 
+    myusb->Task();  
 }
 void cpp_usb_isr() {
   if (myusb)
@@ -224,56 +141,9 @@ void cpp_midi_get_device_info(uint16_t *vendor, uint16_t *product) {
   }
 }
 
-void cpp_debug_status() {
-  uint32_t portsc = USBHS_PORTSC1;
+} // extern "C"
 
-  if (portsc & USBHS_PORTSC_CCS) {
-    if (portsc & USBHS_PORTSC_PE) {
-      rust_log_info("USB: Port enabled, device present");
-    } else {
-      rust_log_info("USB: Device present but port not enabled");
-    }
-  } else {
-    rust_log_info("USB: No device connected");
-  }
-}
-
-void cpp_recheck_power() {
-// Re-verify and re-assert USB host power pin
-#ifdef ARDUINO_TEENSY41
-  // CRITICAL: Check if GPIO8 clock is still enabled
-  uint32_t ccgr3 = CCM_CCGR3;
-  if ((ccgr3 & 0xFFFF) != 0xFFFF) {
-    rust_log_info("USB Power: CCGR3 clock gates disabled! Re-enabling...");
-    CCM_CCGR3 |= 0xFFFFFFFF;
-  }
-
-  // Re-verify IOMUXC configuration hasn't been lost
-  if ((IOMUXC_SW_MUX_CTL_PAD_GPIO_EMC_40 & 0x7) != 5) {
-    rust_log_info("USB Power: IOMUXC mux lost, restoring...");
-    IOMUXC_SW_MUX_CTL_PAD_GPIO_EMC_40 = 5;
-    IOMUXC_SW_PAD_CTL_PAD_GPIO_EMC_40 = 0x0008;
-  }
-
-  // Re-verify GPIO direction
-  if (!(GPIO8_GDIR & (1 << 26))) {
-    rust_log_info("USB Power: GPIO direction lost, restoring...");
-    GPIO8_GDIR |= 1 << 26;
-  }
-
-  // Re-assert power pin
-  GPIO8_DR_SET = 1 << 26;
-
-  // Read back to verify
-  uint32_t dr = GPIO8_DR;
-  if (dr & (1 << 26)) {
-    rust_log_info("USB Power: GPIO still HIGH - OK");
-  } else {
-    rust_log_info("USB Power: ERROR - GPIO is LOW after re-assert!");
-  }
-#endif
-}
-}
+// --- C RUNTIME STUBS ---
 
 extern "C" {
 
