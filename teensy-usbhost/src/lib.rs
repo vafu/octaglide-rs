@@ -7,11 +7,11 @@
 //!
 //! ## Usage
 //!
-//! The C++ USB host library requires several callbacks from your Rust code:
-//! - `rust_log_info(msg)` - logging callback
-//! - `rust_micros()` - microsecond timer callback
+//! The main app must provide these C callbacks (marked with `#[unsafe(no_mangle)]`):
+//! - `rust_log_info(msg: *const u8)` - logging callback
+//! - `rust_micros() -> u32` - microsecond timer callback
 //!
-//! You must also call the ISR handler from your USB interrupt:
+//! Call the ISR handler from your USB interrupt:
 //! ```rust,ignore
 //! #[task(binds = USB_OTG2, priority = 2)]
 //! fn usb_host_isr(_cx: usb_host_isr::Context) {
@@ -21,7 +21,6 @@
 //! }
 //! ```
 
-// Link to C++ library functions
 extern "C" {
     fn cpp_init();
     fn cpp_task();
@@ -32,10 +31,36 @@ extern "C" {
     fn cpp_midi_get_device_info(vendor: *mut u16, product: *mut u16);
 }
 
+// TODO: task-24 - Fix callback indirection breaking USB enumeration
+// This callback mechanism works but breaks USB for unknown reasons.
+// For now, rust_micros() must be defined directly in main.rs.
+//
+// --- TIME SOURCE CALLBACK (CURRENTLY DISABLED) ---
+//
+// static mut TIME_SOURCE: Option<fn() -> u32> = None;
+//
+// pub unsafe fn set_time_source(time_fn: fn() -> u32) {
+//     TIME_SOURCE = Some(time_fn);
+// }
+//
+// fn get_micros() -> u32 {
+//     unsafe {
+//         if let Some(time_fn) = TIME_SOURCE {
+//             time_fn()
+//         } else {
+//             0
+//         }
+//     }
+// }
+//
+// #[unsafe(no_mangle)]
+// pub extern "C" fn rust_micros() -> u32 {
+//     get_micros()
+// }
+
 /// Initialize the USB host subsystem.
 ///
 /// **IMPORTANT:** Must be called after USB logging is ready (typically after a 3s delay).
-/// The C++ code uses `rust_log_info()` during initialization.
 ///
 /// # Safety
 /// - Must only be called once
@@ -136,3 +161,4 @@ impl DeviceInfo {
         }
     }
 }
+

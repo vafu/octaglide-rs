@@ -26,33 +26,12 @@ mod anim;
 mod core;
 mod midi;
 mod midi_fmt;
+mod usb_callbacks;
 
 #[macro_use]
 extern crate alloc;
 
-// Expose Rust time and logging functions to C++ USB host library
 use rtic_monotonics::{Monotonic, systick::Systick};
-
-#[unsafe(no_mangle)]
-pub extern "C" fn rust_micros() -> u32 {
-    Systick::now().duration_since_epoch().to_micros()
-}
-
-#[unsafe(no_mangle)]
-pub extern "C" fn rust_log_info(msg: *const u8) {
-    use ::core::{slice, str};
-    if !msg.is_null() {
-        unsafe {
-            let mut len = 0;
-            while *msg.add(len) != 0 {
-                len += 1;
-            }
-            if let Ok(s) = str::from_utf8(slice::from_raw_parts(msg, len)) {
-                log::info!("[C++] {}", s);
-            }
-        }
-    }
-}
 
 // Parse USB MIDI message from USBHost_t36 format
 // The USBHost library returns: type (status), data1, data2
@@ -110,7 +89,6 @@ mod app {
         midi::MidiBus,
     };
     use board::t41 as brd;
-    use teensy_usbhost as usbhost;
     use embedded_alloc::LlffHeap as Heap;
     use imxrt_log as logging;
     use log::info;
@@ -120,6 +98,7 @@ mod app {
         channel::{Receiver, Sender},
         make_channel,
     };
+    use teensy_usbhost as usbhost;
     use teensy4_bsp::{
         board,
         hal::{

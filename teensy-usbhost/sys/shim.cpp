@@ -136,7 +136,7 @@ uint32_t micros() { return rust_micros(); }
 
 void delay(uint32_t ms) {
   uint64_t start = micros();
-  while ((rust_micros() - start) < ms * 1000) {
+  while ((micros() - start) < ms * 1000) {
     asm("nop");
   }
 }
