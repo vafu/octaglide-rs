@@ -1,7 +1,10 @@
 // --- 1. MACRO CLOAKING ---
-// Stub out NVIC_ENABLE_IRQ BEFORE including headers
-// RTIC handles interrupt enabling, not the C++ library
+// Stub out interrupt management BEFORE including headers
+// RTIC handles interrupts, not the C++ library
 #define NVIC_ENABLE_IRQ(n)                                                     \
+  do { /* RTIC handles this */                                                 \
+  } while (0)
+#define NVIC_DISABLE_IRQ(n)                                                    \
   do { /* RTIC handles this */                                                 \
   } while (0)
 

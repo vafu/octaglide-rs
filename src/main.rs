@@ -39,17 +39,10 @@ unsafe extern "C" {
     fn cpp_send_note_off(note: u8, velocity: u8, channel: u8);
     fn cpp_midi_connected() -> i32;
     fn cpp_midi_get_device_info(vendor: *mut u16, product: *mut u16);
-    fn cpp_debug_status();
-    fn cpp_recheck_power();
-    fn cpp_verify_clocks();
-    fn cpp_configure_usb_power();
 }
 
 // Expose Rust time functions to C++
-use rtic_monotonics::{
-    Monotonic,
-    systick::{Systick, fugit},
-};
+use rtic_monotonics::{Monotonic, systick::Systick};
 
 #[unsafe(no_mangle)]
 pub extern "C" fn rust_micros() -> u32 {
@@ -125,9 +118,8 @@ mod app {
     use crate::{
         anim::animator::{Animator, Cmd},
         core::{Core, Input as CoreIn, MidiEvent},
-        cpp_configure_usb_power, cpp_debug_status, cpp_init, cpp_midi_connected,
-        cpp_midi_get_device_info, cpp_recheck_power, cpp_send_note_off, cpp_send_note_on, cpp_task,
-        cpp_usb_isr, cpp_verify_clocks,
+        cpp_init, cpp_midi_connected, cpp_midi_get_device_info, cpp_send_note_off,
+        cpp_send_note_on, cpp_task, cpp_usb_isr,
         midi::MidiBus,
     };
     use board::t41 as brd;
@@ -208,8 +200,7 @@ mod app {
         let mut led = board::led(&mut gpio2, pins.p13);
 
         const PIN_CONFIG: iomuxc::Config =
-            iomuxc::Config::zero()
-            .set_drive_strength(iomuxc::DriveStrength::R0_7);
+            iomuxc::Config::zero().set_drive_strength(iomuxc::DriveStrength::R0_7);
         iomuxc::configure(&mut pins.p28, PIN_CONFIG);
         let output = gpio3.output(pins.p28);
         output.set();
@@ -359,12 +350,11 @@ mod app {
         let velocity = 100;
         let mut last_connected = false;
         let mut note_timer = 0u32; // Count poll cycles for note timing
-        let mut debug_timer = 0u32; // For periodic debug output
-        let mut gpio_check_timer = 0u32; // For GPIO verification
 
         loop {
+            // CRITICAL: Must call Task() every iteration to process USB transfers
             unsafe {
-                cpp_task(); // Drive the C++ USBHost state machine
+                cpp_task();
             }
 
             // Check connection status
@@ -424,11 +414,9 @@ mod app {
                     note_timer = 0; // Reset for next note
                 }
             }
-
-            // Call Task() as fast as possible - no delay
-            // Yield to other tasks occasionally
-            if (note_timer % 1000) == 0 {
-                Systick::delay(500.millis()).await;
+            // Yield to other tasks occasionally (Task() needs to run frequently for USB transfers)
+            if (note_timer % 10) == 0 {
+                Systick::delay(10.millis()).await;
             }
         }
     }
