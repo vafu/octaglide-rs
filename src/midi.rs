@@ -87,7 +87,13 @@ impl MidiBus {
 
     pub fn send(&mut self, msg: &MidiMsg) {
         // Skip logging PitchBend to avoid noise
-        if !matches!(msg, MidiMsg::ChannelVoice { msg: midi_msg::ChannelVoiceMsg::PitchBend { .. }, .. }) {
+        if !matches!(
+            msg,
+            MidiMsg::ChannelVoice {
+                msg: midi_msg::ChannelVoiceMsg::PitchBend { .. },
+                ..
+            }
+        ) {
             info!(">>> {}", MidiFmt(msg));
         }
 
@@ -127,8 +133,3 @@ impl MidiBus {
         }
     }
 }
-
-
-
-
-

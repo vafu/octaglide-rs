@@ -3,8 +3,6 @@
 
 use ::core::panic::PanicInfo;
 
-use cortex_m::interrupt;
-
 #[panic_handler]
 #[allow(static_mut_refs)]
 fn panic(info: &PanicInfo) -> ! {
