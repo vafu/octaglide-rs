@@ -31,55 +31,6 @@ mod usb_callbacks;
 #[macro_use]
 extern crate alloc;
 
-use rtic_monotonics::{Monotonic, systick::Systick};
-
-// Parse USB MIDI message from USBHost_t36 format
-// The USBHost library returns: type (status), data1, data2
-fn parse_usb_midi(msg_type: u8, data1: u8, data2: u8) -> Option<midi_msg::MidiMsg> {
-    use midi_msg::{Channel, ChannelVoiceMsg, ControlChange, MidiMsg};
-
-    let status = msg_type & 0xF0;
-    let channel = Channel::from_u8(msg_type & 0x0F);
-
-    match status {
-        0x80 => Some(MidiMsg::ChannelVoice {
-            channel,
-            msg: ChannelVoiceMsg::NoteOff {
-                note: data1,
-                velocity: data2,
-            },
-        }),
-        0x90 => Some(MidiMsg::ChannelVoice {
-            channel,
-            msg: ChannelVoiceMsg::NoteOn {
-                note: data1,
-                velocity: data2,
-            },
-        }),
-        0xB0 => Some(MidiMsg::ChannelVoice {
-            channel,
-            msg: ChannelVoiceMsg::ControlChange {
-                control: ControlChange::CC {
-                    control: data1,
-                    value: data2,
-                },
-            },
-        }),
-        0xE0 => {
-            // Pitch bend: combine data1 (LSB) and data2 (MSB) into 14-bit value
-            let bend_value = ((data2 as u16) << 7) | (data1 as u16);
-            Some(MidiMsg::ChannelVoice {
-                channel,
-                msg: ChannelVoiceMsg::PitchBend { bend: bend_value },
-            })
-        }
-        _ => {
-            log::warn!("Unsupported USB MIDI type: {:02X}", msg_type);
-            None
-        }
-    }
-}
-
 #[rtic::app(device = teensy4_bsp, peripherals = true, dispatchers = [KPP, GPT1])]
 mod app {
 
@@ -102,7 +53,6 @@ mod app {
     use teensy4_bsp::{
         board,
         hal::{
-            gpio::Port,
             iomuxc::{
                 self,
                 consts::Const,
@@ -139,7 +89,7 @@ mod app {
     struct Local {
         led: board::Led,
         core: Core,
-        // poller: logging::Poller,
+        poller: logging::Poller,
     }
 
     #[global_allocator]
@@ -148,70 +98,6 @@ mod app {
         use core::mem::MaybeUninit;
         static mut HEAP_MEM: [MaybeUninit<u8>; HEAP_SIZE] = [MaybeUninit::uninit(); HEAP_SIZE];
         unsafe { HEAP.init(&raw mut HEAP_MEM as usize, HEAP_SIZE) }
-    }
-
-    #[init]
-    fn init(cx: init::Context) -> (Shared, Local) {
-        let mut instances: board::Instances = cx.device.into();
-
-        let board::Resources {
-            mut gpio2,
-            mut gpio3,
-            mut pins,
-            usb,
-            lpuart6,
-            ..
-        } = brd(instances);
-
-        let mut core = cx.core;
-        let mut led = board::led(&mut gpio2, pins.p13);
-
-        const PIN_CONFIG: iomuxc::Config =
-            iomuxc::Config::zero().set_drive_strength(iomuxc::DriveStrength::R0_7);
-        iomuxc::configure(&mut pins.p28, PIN_CONFIG);
-        let output = gpio3.output(pins.p28);
-        output.set();
-
-        init_heap();
-        Systick::start(
-            core.SYST,
-            board::ARM_FREQUENCY,
-            rtic_monotonics::create_systick_token!(),
-        );
-
-        let poller = logging::log::usbd(usb, logging::Interrupts::Enabled).unwrap();
-        crate::interrupt::free(|_| unsafe {
-            POLLER = Some(poller);
-        });
-
-        let (midi_sender, midi_receiver) = make_channel!(MidiMsg, MIDI_CHANNEL_CAPACITY);
-        let (animator, animator_sender) = Animator::new();
-        let (core_sender, core_receiver) = make_channel!(CoreIn, CORE_INPUT_CHANNEL_CAPACITY);
-
-        midi_dispatch::spawn(midi_receiver).unwrap();
-        animate::spawn(animator, core_sender.clone()).unwrap();
-        core_task::spawn(core_receiver).ok();
-        usb_host_init::spawn(core_sender.clone()).ok();
-
-        (
-            Shared {
-                midi_bus: MidiBus::new(
-                    prepare_uart(lpuart6, pins.p1, pins.p0),
-                    core_sender.clone(),
-                ),
-            },
-            Local {
-                led,
-                core: Core::new(midi_sender, animator_sender),
-            },
-        )
-    }
-
-    #[idle]
-    fn idle(_: idle::Context) -> ! {
-        loop {
-            cortex_m::asm::wfi();
-        }
     }
 
     fn prepare_uart<const N: u8, TX, RX>(
@@ -231,6 +117,54 @@ mod app {
         midi_uart
     }
 
+    #[init]
+    fn init(cx: init::Context) -> (Shared, Local) {
+        init_heap();
+
+        Systick::start(
+            cx.core.SYST,
+            board::ARM_FREQUENCY,
+            rtic_monotonics::create_systick_token!(),
+        );
+
+        let board::Resources {
+            mut gpio2,
+            pins,
+            usb,
+            lpuart6,
+            ..
+        } = brd(cx.device);
+
+        let (midi_sender, midi_receiver) = make_channel!(MidiMsg, MIDI_CHANNEL_CAPACITY);
+        let (animator, animator_sender) = Animator::new();
+        let (core_sender, core_receiver) = make_channel!(CoreIn, CORE_INPUT_CHANNEL_CAPACITY);
+
+        midi_dispatch::spawn(midi_receiver).unwrap();
+        animate::spawn(animator, core_sender.clone()).unwrap();
+        core_task::spawn(core_receiver).ok();
+        usb_host_init::spawn(core_sender.clone()).ok();
+
+        (
+            Shared {
+                midi_bus: MidiBus::new(
+                    prepare_uart(lpuart6, pins.p1, pins.p0),
+                    core_sender.clone(),
+                ),
+            },
+            Local {
+                led: board::led(&mut gpio2, pins.p13),
+                core: Core::new(midi_sender, animator_sender),
+                poller: logging::log::usbd(usb, logging::Interrupts::Enabled).unwrap(),
+            },
+        )
+    }
+
+    #[idle]
+    fn idle(_: idle::Context) -> ! {
+        loop {
+            cortex_m::asm::wfi();
+        }
+    }
     #[task(binds = LPUART6, shared = [midi_bus], priority = 2)]
     fn midi_handler(mut cx: midi_handler::Context) {
         cx.shared.midi_bus.lock(|midi| midi.handle_interrupt());
@@ -269,33 +203,6 @@ mod app {
         }
     }
 
-    #[task(local = [led], priority = 1)]
-    async fn blink_led(cx: blink_led::Context) {
-        let led = cx.local.led;
-        led.set();
-        Systick::delay(100.millis()).await;
-        led.clear();
-    }
-
-    #[task(binds = USB_OTG1, priority = 2)]
-    #[allow(static_mut_refs)]
-    fn log_over_usb(_cx: log_over_usb::Context) {
-        unsafe {
-            crate::interrupt::free(|_| {
-                if let Some(p) = POLLER.as_mut() {
-                    p.poll();
-                }
-            });
-        }
-    }
-
-    #[task(binds = USB_OTG2, priority = 2)]
-    fn usb_host_isr(_cx: usb_host_isr::Context) {
-        unsafe {
-            usbhost::usb_isr();
-        }
-    }
-
     #[task(priority = 1)]
     #[allow(static_mut_refs)]
     async fn usb_host_init(_cx: usb_host_init::Context, sender: CoreSender) {
@@ -308,6 +215,19 @@ mod app {
         usb_host_test::spawn(sender).ok();
     }
 
+    #[task(binds = USB_OTG2, priority = 2)]
+    fn usb_host_isr(_cx: usb_host_isr::Context) {
+        unsafe {
+            usbhost::usb_isr();
+        }
+    }
+
+    #[task(binds = USB_OTG1, local = [poller])]
+    fn usb_interrupt(cx: usb_interrupt::Context) {
+        cx.local.poller.poll();
+    }
+
+    // All WIP and test stuff goes here:
     #[task(priority = 2)]
     async fn usb_host_test(_cx: usb_host_test::Context, _sender: CoreSender) -> ! {
         info!("usb_host_test: starting USB MIDI output test loop");
