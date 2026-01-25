@@ -54,7 +54,6 @@ mod app {
         board,
         hal::{
             iomuxc::{
-                self,
                 consts::Const,
                 lpuart::{self, Pin, Rx, Tx},
             },
@@ -225,6 +224,14 @@ mod app {
     #[task(binds = USB_OTG1, local = [poller])]
     fn usb_interrupt(cx: usb_interrupt::Context) {
         cx.local.poller.poll();
+    }
+
+    #[task(local = [led], priority = 1)]
+    async fn blink_led(cx: blink_led::Context) {
+        let led = cx.local.led;
+        led.set();
+        Systick::delay(1.millis()).await;
+        led.clear();
     }
 
     // All WIP and test stuff goes here:
