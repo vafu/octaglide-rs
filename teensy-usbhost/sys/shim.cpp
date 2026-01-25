@@ -20,21 +20,6 @@
 // Forward declare Rust logging function
 extern "C" void rust_log_info(const char *msg);
 
-// Wrapper class to track claim() calls
-class LoggingMIDIDevice : public MIDIDevice {
-public:
-  LoggingMIDIDevice(USBHost &host) : MIDIDevice(host) {}
-
-  virtual bool claim(Device_t *dev, int type, const uint8_t *descriptors,
-                     uint32_t len) {
-    bool result = MIDIDevice::claim(dev, type, descriptors, len);
-    if (result) {
-      rust_log_info("MIDI driver claimed device");
-    }
-    return result;
-  }
-};
-
 // --- 3. MEMORY MANAGEMENT ---
 static uint8_t my_heap[16384];
 static size_t heap_idx = 0;
@@ -62,16 +47,16 @@ void operator delete[](void *ptr, size_t size) noexcept {}
 extern "C" uint32_t rust_micros();
 
 // --- 5. EXPOSED API ---
-// 1. Static Allocation (No Heap required, memory reserved at compile time)
+
+// --- STATIC ALLOCATION ---
 USBHost myusb_static;
 USBHub hub1_static(myusb_static);
-// Don't construct MIDI device globally - do it explicitly after logging is
-// ready
-LoggingMIDIDevice *midi_static_ptr = nullptr;
+// Don't construct MIDI device globally - do it explicitly in cpp_init()
+MIDIDevice *midi_static_ptr = nullptr;
 
-// 2. Global Pointers (If you really want to use pointers)
+// Global pointers
 USBHost *myusb = &myusb_static;
-LoggingMIDIDevice *midi = nullptr;
+MIDIDevice *midi = nullptr;
 
 extern "C" {
 
@@ -83,9 +68,9 @@ void cpp_init() {
   CCM_CCGR3 |= 0xFFFFFFFF;
 
   // Create MIDI device driver (placement new into static storage)
-  static uint8_t midi_storage[sizeof(LoggingMIDIDevice)]
+  static uint8_t midi_storage[sizeof(MIDIDevice)]
       __attribute__((aligned(16)));
-  midi_static_ptr = new (midi_storage) LoggingMIDIDevice(myusb_static);
+  midi_static_ptr = new (midi_storage) MIDIDevice(myusb_static);
   midi = midi_static_ptr;
 
   if (!midi) {
