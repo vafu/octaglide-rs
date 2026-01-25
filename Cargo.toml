@@ -6,7 +6,7 @@ edition = "2024"
 [dependencies]
 rtic = { version = "2", features = ["thumbv7-backend"] }
 rtic-monotonics = { version = "1", default-features = false, features = ["cortex-m-systick"] }
-rtic-sync = "1.4.0" 
+rtic-sync = "1.4.0"
 
 imxrt-log = { version = "0.1", default-features = false, features = ["log", "usbd"] }
 teensy4-panic = { version = "0.2", default-features = false }
@@ -24,6 +24,8 @@ libm = "0.2.15"
 
 imxrt-boot-gen = "0.3"
 
+teensy-usbhost = { path = "teensy-usbhost" }
+
 [dependencies.teensy4-bsp]
 version = "0.5"
 features = ["rt"]
@@ -33,7 +35,7 @@ version = "0.4"
 
 
 [build-dependencies]
-cc = "1.0"
+# (empty - USB host C++ compilation moved to teensy-usbhost crate)
 
 # Don't optimize build dependencies, like proc macros.
 # Helps with build times.

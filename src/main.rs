@@ -30,18 +30,7 @@ mod midi_fmt;
 #[macro_use]
 extern crate alloc;
 
-// Link to C++
-unsafe extern "C" {
-    fn cpp_init();
-    fn cpp_task();
-    fn cpp_usb_isr();
-    fn cpp_send_note_on(note: u8, velocity: u8, channel: u8);
-    fn cpp_send_note_off(note: u8, velocity: u8, channel: u8);
-    fn cpp_midi_connected() -> i32;
-    fn cpp_midi_get_device_info(vendor: *mut u16, product: *mut u16);
-}
-
-// Expose Rust time functions to C++
+// Expose Rust time and logging functions to C++ USB host library
 use rtic_monotonics::{Monotonic, systick::Systick};
 
 #[unsafe(no_mangle)]
@@ -118,11 +107,10 @@ mod app {
     use crate::{
         anim::animator::{Animator, Cmd},
         core::{Core, Input as CoreIn, MidiEvent},
-        cpp_init, cpp_midi_connected, cpp_midi_get_device_info, cpp_send_note_off,
-        cpp_send_note_on, cpp_task, cpp_usb_isr,
         midi::MidiBus,
     };
     use board::t41 as brd;
+    use teensy_usbhost as usbhost;
     use embedded_alloc::LlffHeap as Heap;
     use imxrt_log as logging;
     use log::info;
@@ -325,7 +313,7 @@ mod app {
     #[task(binds = USB_OTG2, priority = 2)]
     fn usb_host_isr(_cx: usb_host_isr::Context) {
         unsafe {
-            cpp_usb_isr();
+            usbhost::usb_isr();
         }
     }
 
@@ -336,7 +324,7 @@ mod app {
         Systick::delay(3000.millis()).await;
 
         unsafe {
-            cpp_init();
+            usbhost::init();
         };
         usb_host_test::spawn(sender).ok();
     }
@@ -352,21 +340,17 @@ mod app {
         let mut note_timer = 0u32; // Count poll cycles for note timing
 
         loop {
-            // CRITICAL: Must call Task() every iteration to process USB transfers
+            // CRITICAL: Must call task() every iteration to process USB transfers
             unsafe {
-                cpp_task();
+                usbhost::task();
             }
 
             // Check connection status
-            let connected = unsafe { cpp_midi_connected() == 1 };
+            let connected = unsafe { usbhost::midi_connected() };
 
             if connected != last_connected {
                 if connected {
-                    let mut vendor: u16 = 0;
-                    let mut product: u16 = 0;
-                    unsafe {
-                        cpp_midi_get_device_info(&mut vendor, &mut product);
-                    }
+                    let (vendor, product) = unsafe { usbhost::get_device_info() };
                     info!(
                         "USB MIDI device CONNECTED - VID:{:04X} PID:{:04X}",
                         vendor, product
@@ -389,7 +373,7 @@ mod app {
                             "Sending USB MIDI: NoteOn  note={} vel={} ch={}",
                             note, velocity, channel
                         );
-                        cpp_send_note_on(note, velocity, channel);
+                        usbhost::send_note_on(note, velocity, channel);
                     }
                 } else if note_timer == 50 {
                     unsafe {
@@ -397,7 +381,7 @@ mod app {
                             "Sending USB MIDI: NoteOff note={} vel={} ch={}",
                             note, velocity, channel
                         );
-                        cpp_send_note_off(note, velocity, channel);
+                        usbhost::send_note_off(note, velocity, channel);
                     }
                 } else if note_timer >= 100 {
                     // Move to next note (cycle through C major scale)

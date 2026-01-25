@@ -553,7 +553,6 @@ dependencies = [
 name = "octaglide-rs"
 version = "0.1.0"
 dependencies = [
- "cc",
  "cortex-m",
  "cortex-m-microclock",
  "embedded-alloc",
@@ -569,6 +568,7 @@ dependencies = [
  "rtic",
  "rtic-monotonics",
  "rtic-sync",
+ "teensy-usbhost",
  "teensy4-bsp",
  "teensy4-fcb",
  "teensy4-panic",
@@ -859,6 +859,13 @@ dependencies = [
  "proc-macro2",
  "quote",
  "unicode-ident",
+]
+
+[[package]]
+name = "teensy-usbhost"
+version = "0.1.0"
+dependencies = [
+ "cc",
 ]
 
 [[package]]
