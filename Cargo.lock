@@ -866,7 +866,6 @@ name = "teensy-usbhost"
 version = "0.1.0"
 dependencies = [
  "cc",
- "log",
 ]
 
 [[package]]
