@@ -17,23 +17,9 @@
 #include "USBHost_t36.h"
 #undef private
 
-// Forward declare Rust logging function
+// Forward declare Rust callbacks
 extern "C" void rust_log_info(const char *msg);
-
-// Wrapper class to track claim() calls
-class LoggingMIDIDevice : public MIDIDevice {
-public:
-  LoggingMIDIDevice(USBHost &host) : MIDIDevice(host) {}
-
-  virtual bool claim(Device_t *dev, int type, const uint8_t *descriptors,
-                     uint32_t len) {
-    bool result = MIDIDevice::claim(dev, type, descriptors, len);
-    if (result) {
-      rust_log_info("MIDI driver claimed device");
-    }
-    return result;
-  }
-};
+extern "C" uint32_t rust_micros();
 
 // --- 3. MEMORY MANAGEMENT ---
 static uint8_t my_heap[16384];
@@ -57,21 +43,14 @@ void operator delete[](void *ptr) noexcept {}
 void operator delete(void *ptr, size_t size) noexcept {}
 void operator delete[](void *ptr, size_t size) noexcept {}
 
-// --- 4. TIMEKEEPING ---
-// Forward declare Rust time function
-extern "C" uint32_t rust_micros();
-
-// --- 5. EXPOSED API ---
-// 1. Static Allocation (No Heap required, memory reserved at compile time)
+// --- STATIC ALLOCATION ---
 USBHost myusb_static;
 USBHub hub1_static(myusb_static);
-// Don't construct MIDI device globally - do it explicitly after logging is
-// ready
-LoggingMIDIDevice *midi_static_ptr = nullptr;
+MIDIDevice midi1_static(myusb_static);
 
-// 2. Global Pointers (If you really want to use pointers)
+// Global pointers
 USBHost *myusb = &myusb_static;
-LoggingMIDIDevice *midi = nullptr;
+MIDIDevice *midi = &midi1_static;
 
 extern "C" {
 
@@ -81,17 +60,6 @@ void cpp_init() {
   // Ensure GPIO8 peripheral clock is enabled (required for USB host power on T4.1)
   // The Rust BSP only initializes GPIO1-4, not GPIO6-9
   CCM_CCGR3 |= 0xFFFFFFFF;
-
-  // Create MIDI device driver (placement new into static storage)
-  static uint8_t midi_storage[sizeof(LoggingMIDIDevice)]
-      __attribute__((aligned(16)));
-  midi_static_ptr = new (midi_storage) LoggingMIDIDevice(myusb_static);
-  midi = midi_static_ptr;
-
-  if (!midi) {
-    rust_log_info("USB Host: ERROR - Failed to create MIDI driver!");
-    return;
-  }
 
   myusb->begin();
   rust_log_info("USB Host: Ready");

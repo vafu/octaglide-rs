@@ -30,76 +30,7 @@ mod midi_fmt;
 #[macro_use]
 extern crate alloc;
 
-// Expose Rust time and logging functions to C++ USB host library
 use rtic_monotonics::{Monotonic, systick::Systick};
-
-#[unsafe(no_mangle)]
-pub extern "C" fn rust_micros() -> u32 {
-    Systick::now().duration_since_epoch().to_micros()
-}
-
-#[unsafe(no_mangle)]
-pub extern "C" fn rust_log_info(msg: *const u8) {
-    use ::core::{slice, str};
-    if !msg.is_null() {
-        unsafe {
-            let mut len = 0;
-            while *msg.add(len) != 0 {
-                len += 1;
-            }
-            if let Ok(s) = str::from_utf8(slice::from_raw_parts(msg, len)) {
-                log::info!("[C++] {}", s);
-            }
-        }
-    }
-}
-
-// Parse USB MIDI message from USBHost_t36 format
-// The USBHost library returns: type (status), data1, data2
-fn parse_usb_midi(msg_type: u8, data1: u8, data2: u8) -> Option<midi_msg::MidiMsg> {
-    use midi_msg::{Channel, ChannelVoiceMsg, ControlChange, MidiMsg};
-
-    let status = msg_type & 0xF0;
-    let channel = Channel::from_u8(msg_type & 0x0F);
-
-    match status {
-        0x80 => Some(MidiMsg::ChannelVoice {
-            channel,
-            msg: ChannelVoiceMsg::NoteOff {
-                note: data1,
-                velocity: data2,
-            },
-        }),
-        0x90 => Some(MidiMsg::ChannelVoice {
-            channel,
-            msg: ChannelVoiceMsg::NoteOn {
-                note: data1,
-                velocity: data2,
-            },
-        }),
-        0xB0 => Some(MidiMsg::ChannelVoice {
-            channel,
-            msg: ChannelVoiceMsg::ControlChange {
-                control: ControlChange::CC {
-                    control: data1,
-                    value: data2,
-                },
-            },
-        }),
-        0xE0 => {
-            // Pitch bend: combine data1 (LSB) and data2 (MSB) into 14-bit value
-            let bend_value = ((data2 as u16) << 7) | (data1 as u16);
-            Some(MidiMsg::ChannelVoice {
-                channel,
-                msg: ChannelVoiceMsg::PitchBend { bend: bend_value },
-            })
-        }
-        _ => {
-            log::warn!("Unsupported USB MIDI type: {:02X}", msg_type);
-            None
-        }
-    }
-}
 
 #[rtic::app(device = teensy4_bsp, peripherals = true, dispatchers = [KPP, GPT1])]
 mod app {
@@ -110,7 +41,6 @@ mod app {
         midi::MidiBus,
     };
     use board::t41 as brd;
-    use teensy_usbhost as usbhost;
     use embedded_alloc::LlffHeap as Heap;
     use imxrt_log as logging;
     use log::info;
@@ -120,6 +50,7 @@ mod app {
         channel::{Receiver, Sender},
         make_channel,
     };
+    use teensy_usbhost as usbhost;
     use teensy4_bsp::{
         board,
         hal::{
@@ -160,7 +91,7 @@ mod app {
     struct Local {
         led: board::Led,
         core: Core,
-        // poller: logging::Poller,
+        poller: logging::Poller,
     }
 
     #[global_allocator]
@@ -173,8 +104,6 @@ mod app {
 
     #[init]
     fn init(cx: init::Context) -> (Shared, Local) {
-        let mut instances: board::Instances = cx.device.into();
-
         let board::Resources {
             mut gpio2,
             mut gpio3,
@@ -182,10 +111,8 @@ mod app {
             usb,
             lpuart6,
             ..
-        } = brd(instances);
+        } = brd(cx.device);
 
-        let mut core = cx.core;
-        let mut led = board::led(&mut gpio2, pins.p13);
 
         const PIN_CONFIG: iomuxc::Config =
             iomuxc::Config::zero().set_drive_strength(iomuxc::DriveStrength::R0_7);
@@ -195,15 +122,12 @@ mod app {
 
         init_heap();
         Systick::start(
-            core.SYST,
+            cx.core.SYST,
             board::ARM_FREQUENCY,
             rtic_monotonics::create_systick_token!(),
         );
 
         let poller = logging::log::usbd(usb, logging::Interrupts::Enabled).unwrap();
-        crate::interrupt::free(|_| unsafe {
-            POLLER = Some(poller);
-        });
 
         let (midi_sender, midi_receiver) = make_channel!(MidiMsg, MIDI_CHANNEL_CAPACITY);
         let (animator, animator_sender) = Animator::new();
@@ -214,6 +138,7 @@ mod app {
         core_task::spawn(core_receiver).ok();
         usb_host_init::spawn(core_sender.clone()).ok();
 
+        let led = board::led(&mut gpio2, pins.p13);
         (
             Shared {
                 midi_bus: MidiBus::new(
@@ -224,6 +149,7 @@ mod app {
             Local {
                 led,
                 core: Core::new(midi_sender, animator_sender),
+                poller,
             },
         )
     }
@@ -298,16 +224,10 @@ mod app {
         led.clear();
     }
 
-    #[task(binds = USB_OTG1, priority = 2)]
+    #[task(binds = USB_OTG1, local = [poller], priority = 2)]
     #[allow(static_mut_refs)]
-    fn log_over_usb(_cx: log_over_usb::Context) {
-        unsafe {
-            crate::interrupt::free(|_| {
-                if let Some(p) = POLLER.as_mut() {
-                    p.poll();
-                }
-            });
-        }
+    fn log_over_usb(cx: log_over_usb::Context) {
+        cx.local.poller.poll();
     }
 
     #[task(binds = USB_OTG2, priority = 2)]
@@ -322,6 +242,12 @@ mod app {
     async fn usb_host_init(_cx: usb_host_init::Context, sender: CoreSender) {
         info!("usb_host_init: waiting 3 seconds for USB logging to be ready...");
         Systick::delay(3000.millis()).await;
+
+        // Set up time source for USB host library
+        usbhost::set_time_source(|| {
+            use rtic_monotonics::Monotonic;
+            Systick::now().duration_since_epoch().to_micros()
+        });
 
         unsafe {
             usbhost::init();

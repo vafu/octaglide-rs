@@ -7,11 +7,17 @@
 //!
 //! ## Usage
 //!
-//! The C++ USB host library requires several callbacks from your Rust code:
-//! - `rust_log_info(msg)` - logging callback
-//! - `rust_micros()` - microsecond timer callback
+//! Before initializing the USB host, you must set up a time source:
 //!
-//! You must also call the ISR handler from your USB interrupt:
+//! ```rust,ignore
+//! teensy_usbhost::set_time_source(|| {
+//!     Systick::now().duration_since_epoch().to_micros()
+//! });
+//!
+//! teensy_usbhost::init();
+//! ```
+//!
+//! Then call the ISR handler from your USB interrupt:
 //! ```rust,ignore
 //! #[task(binds = USB_OTG2, priority = 2)]
 //! fn usb_host_isr(_cx: usb_host_isr::Context) {
@@ -21,7 +27,8 @@
 //! }
 //! ```
 
-// Link to C++ library functions
+use core::sync::atomic::{AtomicPtr, Ordering};
+
 extern "C" {
     fn cpp_init();
     fn cpp_task();
@@ -32,13 +39,45 @@ extern "C" {
     fn cpp_midi_get_device_info(vendor: *mut u16, product: *mut u16);
 }
 
+// --- TIME SOURCE CALLBACK ---
+
+static TIME_SOURCE: AtomicPtr<()> = AtomicPtr::new(core::ptr::null_mut());
+
+/// Set the microsecond time source for the USB host library.
+///
+/// This must be called before `init()` to provide a function that returns
+/// the current time in microseconds.
+///
+/// # Example
+/// ```rust,ignore
+/// teensy_usbhost::set_time_source(|| {
+///     Systick::now().duration_since_epoch().to_micros()
+/// });
+/// ```
+pub fn set_time_source(time_fn: fn() -> u32) {
+    TIME_SOURCE.store(time_fn as *mut (), Ordering::Release);
+}
+
+fn get_micros() -> u32 {
+    let ptr = TIME_SOURCE.load(Ordering::Acquire);
+    if ptr.is_null() {
+        // No time source set - return 0 (this will likely cause issues)
+        0
+    } else {
+        let time_fn: fn() -> u32 = unsafe { core::mem::transmute(ptr) };
+        time_fn()
+    }
+}
+
 /// Initialize the USB host subsystem.
 ///
-/// **IMPORTANT:** Must be called after USB logging is ready (typically after a 3s delay).
-/// The C++ code uses `rust_log_info()` during initialization.
+/// **IMPORTANT:**
+/// - Must be called after `set_time_source()`
+/// - Must be called after USB logging is ready (typically after a 3s delay)
 ///
 /// # Safety
 /// - Must only be called once
+/// - Must be called after `set_time_source()` has been called
 /// - Must be called after USB logging is initialized
 pub unsafe fn init() {
     cpp_init();
@@ -134,5 +173,45 @@ impl DeviceInfo {
                 None
             }
         }
+    }
+}
+
+// --- C++ CALLBACK IMPLEMENTATIONS ---
+
+/// C++ callback for microsecond timer
+///
+/// This is called by the C++ USB host library to get the current time.
+#[no_mangle]
+pub extern "C" fn rust_micros() -> u32 {
+    get_micros()
+}
+
+/// C++ callback for logging
+///
+/// This is called by the C++ USB host library to log messages.
+#[no_mangle]
+pub extern "C" fn rust_log_info(msg: *const u8) {
+    use core::{slice, str};
+
+    if msg.is_null() {
+        return;
+    }
+
+    // Find null terminator
+    let mut len = 0;
+    unsafe {
+        while *msg.add(len) != 0 {
+            len += 1;
+            if len > 1024 {
+                // Safety limit
+                return;
+            }
+        }
+    }
+
+    // Convert to Rust string slice
+    let bytes = unsafe { slice::from_raw_parts(msg, len) };
+    if let Ok(s) = str::from_utf8(bytes) {
+        log::info!("{}", s);
     }
 }
