@@ -22,22 +22,7 @@ impl Passthrough {
 impl super::Consumer for Passthrough {
     fn consume(&mut self, event: MidiEvent) -> ConsumeResult {
         let mut res: CoreOutput = Vec::new();
-
-        // Log outgoing messages (skip PitchBend to reduce noise)
-        let msg = event.msg;
-        if !matches!(
-            msg,
-            MidiMsg::ChannelVoice {
-                msg: midi_msg::ChannelVoiceMsg::PitchBend { .. },
-                ..
-            }
-        ) {
-            info!(">>> {}", MidiFmt(&msg));
-        }
-
-        // Forward to output bus
-        res.push(Output::SendMidi(msg)).ok();
-
+        res.push(Output::SendMidi(event.msg)).ok();
         ConsumeResult::Consumed(res)
     }
 }

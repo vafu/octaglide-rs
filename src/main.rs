@@ -37,6 +37,7 @@ mod app {
         anim::animator::{Animator, Cmd},
         core::{Core, Input as CoreIn, MidiEvent},
         midi::{Bus, MidiBus, UartMidiBus},
+        midi_fmt::MidiFmt,
         usb_midi::UsbMidiBus,
     };
     use board::t41 as brd;
@@ -196,6 +197,15 @@ mod app {
         loop {
             let msg = r.recv().await.unwrap();
             cx.shared.tx_bus.lock(|bus| {
+                if !matches!(
+                    msg,
+                    MidiMsg::ChannelVoice {
+                        msg: midi_msg::ChannelVoiceMsg::PitchBend { .. },
+                        ..
+                    }
+                ) {
+                    info!(">>> {}", MidiFmt(&msg));
+                }
                 bus.send(&msg);
             });
         }
