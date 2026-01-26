@@ -71,7 +71,7 @@ impl UartMidiBus {
 
                 match MidiMsg::from_midi_with_context(slice, &mut self.rx_ctx) {
                     Ok((msg, len)) => {
-                        let input = CoreIn::Process(MidiEvent::from_user(Ok(msg)));
+                        let input = CoreIn::Process(MidiEvent::from_user(msg));
                         if let Err(e) = self.core_sender.try_send(input) {
                             log::error!("[MidiBus:CoreIn] {:?}", e);
                         }
@@ -83,10 +83,7 @@ impl UartMidiBus {
                     }
 
                     Err(e) => {
-                        let input = CoreIn::Process(MidiEvent::from_user(Err(e)));
-                        if let Err(e) = self.core_sender.try_send(input) {
-                            log::error!("[MidiBus:CoreIn] {:?}", e);
-                        }
+                        log::error!("[MidiBus:Error reading] {:?}", e);
                         self.drain_rx_queue(1);
                     }
                 }

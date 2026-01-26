@@ -10,12 +10,12 @@ use crate::midi_fmt::MidiFmt;
 /// MIDI message with metadata about its origin and context
 #[derive(Debug, Clone)]
 pub struct MidiEvent {
-    pub msg: Result<MidiMsg, ParseError>,
+    pub msg: MidiMsg,
     pub synthetic: bool,
 }
 
 impl MidiEvent {
-    pub fn from_user(msg: Result<MidiMsg, ParseError>) -> Self {
+    pub fn from_user(msg: MidiMsg) -> Self {
         Self {
             msg,
             synthetic: false,
@@ -24,14 +24,14 @@ impl MidiEvent {
 
     pub fn synthetic(msg: MidiMsg) -> Self {
         Self {
-            msg: Ok(msg),
+            msg,
             synthetic: true,
         }
     }
 
     pub fn usb(msg: MidiMsg) -> Self {
         Self {
-            msg: Ok(msg),
+            msg,
             synthetic: false,
         }
     }
@@ -41,7 +41,7 @@ use crate::{
     anim::animator::Cmd,
     app::{AnimatorSender, MidiSender},
     core::{
-        consumers::{Consumer, Glider},
+        consumers::{Consumer, Glider, Passthrough},
         transformers::{MidiTransformer, OctaveShifter},
     },
 };
@@ -68,7 +68,10 @@ pub enum Output {
 impl Core {
     pub fn new(midi_sender: MidiSender, animator_sender: AnimatorSender) -> Self {
         let transformers: Vec<Box<dyn MidiTransformer>> = vec![Box::new(OctaveShifter::new())];
-        let consumers: Vec<Box<dyn Consumer>> = vec![Box::new(Glider::new())];
+        let consumers: Vec<Box<dyn Consumer>> = vec![
+            Box::new(Glider::new()),
+            Box::new(Passthrough::new()), // LAST: routes all unconsumed events
+        ];
         Core {
             midi_sender,
             animator_sender,
@@ -81,57 +84,63 @@ impl Core {
         match input {
             Input::Process(mut event) => {
                 // Handle parse errors
-                let Ok(msg) = event.msg else {
-                    info!("Midi: {:?}", event.msg.unwrap_err());
-                    return;
-                };
 
                 // Apply transformers only to user MIDI
                 let transformed_msg = if !event.synthetic {
                     match self
                         .transformers
                         .iter_mut()
-                        .try_fold(msg, |m, p| p.process(m))
+                        .try_fold(event.msg, |m, p| p.process(m))
                     {
                         Some(m) => m,
                         None => return, // Transformer filtered it out
                     }
                 } else {
-                    msg
+                    event.msg
                 };
 
-                event.msg = Ok(transformed_msg);
+                event.msg = transformed_msg;
 
                 // Format and log event
-                if let Ok(msg) = &event.msg {
-                    // Skip logging PitchBend to avoid noise
-                    if !matches!(
-                        msg,
-                        MidiMsg::ChannelVoice {
-                            msg: midi_msg::ChannelVoiceMsg::PitchBend { .. },
-                            ..
-                        }
-                    ) {
-                        let synthetic = if event.synthetic { " [synthetic]" } else { "" };
-                        info!("<<< {}{}", MidiFmt(msg), synthetic);
+                // Skip logging PitchBend to avoid noise
+                if !matches!(
+                    event.msg,
+                    MidiMsg::ChannelVoice {
+                        msg: midi_msg::ChannelVoiceMsg::PitchBend { .. },
+                        ..
                     }
-                } else {
-                    info!("<<< {:?}", &event);
+                ) {
+                    let synthetic = if event.synthetic { " [synthetic]" } else { "" };
+                    info!("<<< {}{}", MidiFmt(&event.msg), synthetic);
                 }
 
-                // Process the event through consumers
+                let mut event = event;
+                // Process the event through consumers (serial chain with early exit)
                 for c in self.consumers.iter_mut() {
-                    for out in c.consume(&event) {
-                        match out {
-                            Output::SendMidi(msg) => {
-                                self.midi_sender.send(msg.clone()).await.unwrap();
+                    use consumers::ConsumeResult;
+
+                    match c.consume(event) {
+                        ConsumeResult::Consumed(outputs) => {
+                            // Process outputs and stop consuming chain
+                            for out in outputs {
+                                match out {
+                                    Output::SendMidi(msg) => {
+                                        self.midi_sender.send(msg.clone()).await.unwrap();
+                                    }
+                                    Output::BlinkLed => {
+                                        crate::app::blink_led::spawn().ok();
+                                    }
+                                    Output::Animate(cmd) => {
+                                        self.animator_sender.send(cmd).await.unwrap();
+                                    }
+                                }
                             }
-                            Output::BlinkLed => {
-                                crate::app::blink_led::spawn().ok();
-                            }
-                            Output::Animate(cmd) => {
-                                self.animator_sender.send(cmd).await.unwrap();
-                            }
+                            break; // Don't pass to other consumers
+                        }
+                        ConsumeResult::Ignored(ev) => {
+                            // Continue to next consumer
+                            event = ev;
+                            continue;
                         }
                     }
                 }

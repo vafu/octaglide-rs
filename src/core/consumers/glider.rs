@@ -11,7 +11,11 @@ use crate::{
         animator::Cmd,
         modulators::{Glide, Modulator},
     },
-    core::{Output::*, consumers::CoreOutput},
+    core::{
+        MidiEvent,
+        Output::*,
+        consumers::{ConsumeResult, CoreOutput},
+    },
 };
 
 const MAX_HELD_NOTES: usize = 8;
@@ -52,7 +56,7 @@ impl Glider {
         &mut self,
         channel: Channel,
         note: u8,
-        midi_msg: &MidiMsg,
+        midi_msg: MidiMsg,
         res: &mut CoreOutput,
     ) {
         let Some(pos) = self.held_notes.iter().position(|&n| n == note) else {
@@ -82,15 +86,13 @@ impl Glider {
 }
 
 impl super::Consumer for Glider {
-    fn consume(&mut self, event: &super::super::MidiEvent) -> CoreOutput {
+    fn consume(&mut self, event: MidiEvent) -> ConsumeResult {
+        use super::ConsumeResult;
+
         let mut res = Vec::new();
 
-        let Ok(ref midi_msg) = event.msg else {
-            return res;
-        };
-
-        let MidiMsg::ChannelVoice { channel, msg } = midi_msg else {
-            return res;
+        let MidiMsg::ChannelVoice { channel, msg } = event.msg else {
+            return ConsumeResult::Ignored(event);
         };
 
         // Synthetic messages: pass through with filtering
@@ -98,33 +100,34 @@ impl super::Consumer for Glider {
             match msg {
                 NoteOff { note, .. } => {
                     // Filter out NoteOff for held notes, allow for intermediate notes
-                    if !self.held_notes.contains(note) {
-                        res.push(SendMidi(midi_msg.clone())).ok();
+                    if !self.held_notes.contains(&note) {
+                        res.push(SendMidi(event.msg)).ok();
                     } else {
-                        info!("skip removing {}", note);
+                        info!("skip removing {}", &note);
                     }
                 }
                 _ => {
                     // Pass through all other synthetic messages (NoteOn, PitchBend, etc.)
-                    res.push(SendMidi(midi_msg.clone())).ok();
+                    res.push(SendMidi(event.msg)).ok();
                 }
             }
-            return res;
+            return ConsumeResult::Consumed(res);
         }
 
         // User messages: process normally
         match msg {
             NoteOn { note, velocity } => {
-                self.handle_note_on(*channel, *note, *velocity, &mut res);
+                self.handle_note_on(channel, note, velocity, &mut res);
+                ConsumeResult::Consumed(res)
             }
 
             NoteOff { note, .. } => {
-                self.handle_note_off(*channel, *note, midi_msg, &mut res);
+                self.handle_note_off(channel, note, event.msg, &mut res);
+                ConsumeResult::Consumed(res)
             }
 
-            _ => {}
+            // Ignore other messages (CC, PitchBend, etc.) - let passthrough handle them
+            _ => ConsumeResult::Ignored(event),
         }
-        res
     }
 }
-

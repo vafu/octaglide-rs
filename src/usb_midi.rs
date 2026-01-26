@@ -19,7 +19,6 @@ impl MidiBus for UsbMidiBus {
     }
 
     fn send(&mut self, msg: &MidiMsg) {
-        info!("routing {:?}", msg);
         if usbhost::midi_connected() {
             usbhost::send_midi(msg);
         }

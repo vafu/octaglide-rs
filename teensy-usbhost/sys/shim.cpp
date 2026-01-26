@@ -108,6 +108,7 @@ void cpp_send_midi(const uint8_t *data, uint8_t len) {
       midi->sendPolyPressure(data[1], data[2], channel);
     break;
   case 0xB0: // Control Change
+    rust_log_info("control change");
     if (len >= 3)
       midi->sendControlChange(data[1], data[2], channel);
     break;
