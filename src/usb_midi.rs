@@ -1,4 +1,5 @@
 use crate::midi::MidiBus;
+use log::info;
 use midi_msg::MidiMsg;
 use teensy_usbhost as usbhost;
 
@@ -18,6 +19,7 @@ impl MidiBus for UsbMidiBus {
     }
 
     fn send(&mut self, msg: &MidiMsg) {
+        info!("routing {:?}", msg);
         if usbhost::midi_connected() {
             usbhost::send_midi(msg);
         }
