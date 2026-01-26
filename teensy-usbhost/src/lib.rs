@@ -15,9 +15,7 @@
 //! ```rust,ignore
 //! #[task(binds = USB_OTG2, priority = 2)]
 //! fn usb_host_isr(_cx: usb_host_isr::Context) {
-//!     unsafe {
 //!         teensy_usbhost::usb_isr();
-//!     }
 //! }
 //! ```
 
@@ -25,8 +23,7 @@ extern "C" {
     fn cpp_init();
     fn cpp_task();
     fn cpp_usb_isr();
-    fn cpp_send_note_on(note: u8, velocity: u8, channel: u8);
-    fn cpp_send_note_off(note: u8, velocity: u8, channel: u8);
+    fn cpp_send_midi(data: *const u8, len: u8);
     fn cpp_midi_connected() -> i32;
     fn cpp_midi_get_device_info(vendor: *mut u16, product: *mut u16);
 }
@@ -65,24 +62,33 @@ extern "C" {
 /// # Safety
 /// - Must only be called once
 /// - Must be called after USB logging is initialized
-pub unsafe fn init() {
-    cpp_init();
+pub fn init() {
+    unsafe {
+        cpp_init();
+    }
 }
 
 /// Drive the USB host state machine.
 ///
-/// **CRITICAL:** Must be called continuously in a loop to:
+/// **CRITICAL:** Must be called regularly to:
 /// - Process USB enumeration
 /// - Queue and transmit USB transfers (including MIDI TX)
 /// - Handle timer events for batched MIDI sends
 /// - Service RX data
 ///
+/// Recommended calling patterns:
+/// - From USB interrupt handler (event-driven)
+/// - After every send operation (immediate TX)
+/// - Periodic maintenance task at ~10ms intervals (timer events)
+///
 /// Without regular calls to this function, MIDI messages will be queued but never transmitted!
 ///
 /// # Safety
 /// Must be called from the same context that initialized the USB host.
-pub unsafe fn task() {
-    cpp_task();
+pub fn task() {
+    unsafe {
+        cpp_task();
+    }
 }
 
 /// USB host interrupt service routine.
@@ -91,26 +97,10 @@ pub unsafe fn task() {
 ///
 /// # Safety
 /// Must be called from interrupt context.
-pub unsafe fn usb_isr() {
-    cpp_usb_isr();
-}
-
-/// Send a MIDI Note On message.
-///
-/// # Safety
-/// - Device must be connected (check with `midi_connected()` first)
-/// - `task()` must be called regularly for the message to be transmitted
-pub unsafe fn send_note_on(note: u8, velocity: u8, channel: u8) {
-    cpp_send_note_on(note, velocity, channel);
-}
-
-/// Send a MIDI Note Off message.
-///
-/// # Safety
-/// - Device must be connected (check with `midi_connected()` first)
-/// - `task()` must be called regularly for the message to be transmitted
-pub unsafe fn send_note_off(note: u8, velocity: u8, channel: u8) {
-    cpp_send_note_off(note, velocity, channel);
+pub fn usb_isr() {
+    unsafe {
+        cpp_usb_isr();
+    }
 }
 
 /// Check if a MIDI device is connected.
@@ -120,8 +110,8 @@ pub unsafe fn send_note_off(note: u8, velocity: u8, channel: u8) {
 ///
 /// # Safety
 /// Safe to call at any time after `init()`.
-pub unsafe fn midi_connected() -> bool {
-    cpp_midi_connected() == 1
+pub fn midi_connected() -> bool {
+    unsafe { cpp_midi_connected() == 1 }
 }
 
 /// Get device information for the connected MIDI device.
@@ -131,11 +121,32 @@ pub unsafe fn midi_connected() -> bool {
 ///
 /// # Safety
 /// Safe to call at any time after `init()`.
-pub unsafe fn get_device_info() -> (u16, u16) {
+pub fn get_device_info() -> (u16, u16) {
     let mut vendor: u16 = 0;
     let mut product: u16 = 0;
-    cpp_midi_get_device_info(&mut vendor, &mut product);
+    unsafe {
+        cpp_midi_get_device_info(&mut vendor, &mut product);
+    }
     (vendor, product)
+}
+
+/// Send a generic MIDI message.
+///
+/// This function accepts any MIDI message and dispatches it to the appropriate
+/// USB MIDI method based on the status byte.
+///
+/// # Safety
+/// - Device must be connected (check with `midi_connected()` first)
+/// - `task()` must be called regularly for the message to be transmitted
+/// - The message must be a valid MIDI message with proper status byte
+pub fn send_midi(msg: &midi_msg::MidiMsg) {
+    let bytes = msg.to_midi();
+    if !bytes.is_empty() && bytes.len() <= 16 {
+        unsafe {
+            cpp_send_midi(bytes.as_ptr(), bytes.len() as u8);
+        }
+    }
+    task();
 }
 
 /// Device information structure
@@ -161,4 +172,3 @@ impl DeviceInfo {
         }
     }
 }
-

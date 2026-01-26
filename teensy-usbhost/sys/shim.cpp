@@ -62,14 +62,8 @@ extern "C" {
 
 void cpp_init() {
   rust_log_info("USB Host: Initializing");
-
-  // Ensure GPIO8 peripheral clock is enabled (required for USB host power on T4.1)
-  // The Rust BSP only initializes GPIO1-4, not GPIO6-9
-  CCM_CCGR3 |= 0xFFFFFFFF;
-
   // Create MIDI device driver (placement new into static storage)
-  static uint8_t midi_storage[sizeof(MIDIDevice)]
-      __attribute__((aligned(16)));
+  static uint8_t midi_storage[sizeof(MIDIDevice)] __attribute__((aligned(16)));
   midi_static_ptr = new (midi_storage) MIDIDevice(myusb_static);
   midi = midi_static_ptr;
 
@@ -82,23 +76,58 @@ void cpp_init() {
   rust_log_info("USB Host: Ready");
 }
 void cpp_task() {
-  if (myusb) 
-    myusb->Task();  
+  if (myusb)
+    myusb->Task();
 }
 void cpp_usb_isr() {
   if (myusb)
     myusb->isr();
 }
 
-void cpp_send_note_on(uint8_t note, uint8_t velocity, uint8_t channel) {
-  if (midi) {
-    midi->sendNoteOn(note, velocity, channel);
-  }
-}
+void cpp_send_midi(const uint8_t *data, uint8_t len) {
+  if (!midi || len == 0)
+    return;
 
-void cpp_send_note_off(uint8_t note, uint8_t velocity, uint8_t channel) {
-  if (midi) {
-    midi->sendNoteOff(note, velocity, channel);
+  // Parse status byte to determine MIDI message type
+  uint8_t status = data[0];
+  uint8_t msg_type = status & 0xF0;
+  uint8_t channel = (status & 0x0F) + 1; // MIDIDevice uses 1-indexed channels
+
+  switch (msg_type) {
+  case 0x80: // Note Off
+    if (len >= 3) {
+      midi->sendNoteOff(data[1], data[2], channel);
+    }
+    break;
+  case 0x90: // Note On
+    if (len >= 3)
+      midi->sendNoteOn(data[1], data[2], channel);
+    break;
+  case 0xA0: // Polyphonic Aftertouch
+    if (len >= 3)
+      midi->sendPolyPressure(data[1], data[2], channel);
+    break;
+  case 0xB0: // Control Change
+    if (len >= 3)
+      midi->sendControlChange(data[1], data[2], channel);
+    break;
+  case 0xC0: // Program Change
+    if (len >= 2)
+      midi->sendProgramChange(data[1], channel);
+    break;
+  case 0xD0: // Channel Aftertouch
+    if (len >= 2)
+      midi->sendAfterTouch(data[1], channel);
+    break;
+  case 0xE0: // Pitch Bend (14-bit value, LSB first)
+    if (len >= 3) {
+      uint16_t bend = data[1] | (data[2] << 7);
+      midi->sendPitchBend(bend, channel);
+    }
+    break;
+  default:
+    // Unsupported message type - ignore
+    break;
   }
 }
 

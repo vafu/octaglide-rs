@@ -105,7 +105,13 @@ impl Core {
                 // Format and log event
                 if let Ok(msg) = &event.msg {
                     // Skip logging PitchBend to avoid noise
-                    if !matches!(msg, MidiMsg::ChannelVoice { msg: midi_msg::ChannelVoiceMsg::PitchBend { .. }, .. }) {
+                    if !matches!(
+                        msg,
+                        MidiMsg::ChannelVoice {
+                            msg: midi_msg::ChannelVoiceMsg::PitchBend { .. },
+                            ..
+                        }
+                    ) {
                         let synthetic = if event.synthetic { " [synthetic]" } else { "" };
                         info!("<<< {}{}", MidiFmt(msg), synthetic);
                     }
@@ -133,15 +139,3 @@ impl Core {
         }
     }
 }
-
-
-
-
-
-
-
-
-
-
-
-

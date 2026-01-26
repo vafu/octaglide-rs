@@ -1,3 +1,4 @@
+use enum_dispatch::enum_dispatch;
 use heapless::Deque;
 use log::info;
 use midi_msg::{MidiMsg, ReceiverContext};
@@ -7,12 +8,30 @@ use crate::{
     app::{CoreSender, MidiUart},
     core::{Input as CoreIn, MidiEvent},
     midi_fmt::MidiFmt,
+    usb_midi::UsbMidiBus,
 };
 
 // TODO: consider changing midi BAUD (elektron Turbo), might need to update buf size.
 const MIDI_BUF_SIZE: usize = 32;
 
-pub struct MidiBus {
+/// Common interface for MIDI bus implementations (UART, USB, etc.)
+#[enum_dispatch]
+pub trait MidiBus {
+    /// Process incoming MIDI (called from ISR or polling loop)
+    fn poll(&mut self);
+
+    /// Send MIDI message to output
+    fn send(&mut self, msg: &MidiMsg);
+}
+
+/// Polymorphic bus type using enum dispatch for zero-cost abstraction
+#[enum_dispatch(MidiBus)]
+pub enum Bus {
+    Uart(UartMidiBus),
+    Usb(UsbMidiBus),
+}
+
+pub struct UartMidiBus {
     uart: MidiUart,
 
     tx_ctx: Option<u8>,
@@ -24,7 +43,7 @@ pub struct MidiBus {
     core_sender: CoreSender,
 }
 
-impl MidiBus {
+impl UartMidiBus {
     pub fn new(uart: MidiUart, core_sender: CoreSender) -> Self {
         Self {
             uart,
@@ -131,5 +150,16 @@ impl MidiBus {
                 self.rx_buf.pop_front_unchecked();
             }
         }
+    }
+}
+
+/// Implement MidiBus trait for UART bus
+impl MidiBus for UartMidiBus {
+    fn poll(&mut self) {
+        self.handle_interrupt();
+    }
+
+    fn send(&mut self, msg: &MidiMsg) {
+        self.send(msg);
     }
 }

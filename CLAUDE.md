@@ -132,6 +132,37 @@ octaglide-rs/
 - Applies offset to all NoteOn/NoteOff messages
 - Clamps result to valid MIDI range (0-127)
 
+### 3. Hardware Reset Button
+**Location**: `src/main.rs` (reset_button_isr)
+
+**How it works**:
+- P14 (GPIO1_IO18) configured as input with 100kΩ pulldown
+- Wire momentary button from P14 to 3.3V
+- Interrupt-driven on rising edge (button press)
+- Immediately resets MCU via `cortex_m::peripheral::SCB::sys_reset()`
+
+**Implementation details**:
+- Uses GPIO1_COMBINED_16_31 interrupt (P14 is GPIO1 pin 18, which is in the 16-31 range)
+- Priority 2 (same as other ISRs)
+- No debouncing needed - interrupt fires once, MCU resets immediately
+- Important: P14 uses GPIO1_COMBINED_16_31, not GPIO1_COMBINED_0_15!
+- RTIC automatically enables the interrupt via `#[task(binds = ...)]` - no manual NVIC setup needed
+
+**GPIO Interrupt Mapping Reference** (for future encoder work):
+- GPIO1 pins 0-15 → `GPIO1_COMBINED_0_15`
+- GPIO1 pins 16-31 → `GPIO1_COMBINED_16_31`
+- GPIO2 pins 0-15 → `GPIO2_COMBINED_0_15`
+- GPIO2 pins 16-31 → `GPIO2_COMBINED_16_31`
+- (etc for GPIO3, GPIO4...)
+
+To enable a GPIO interrupt:
+```rust
+// Configure pin and set interrupt trigger
+gpio_port.set_interrupt(&input_pin, Some(gpio::Trigger::RisingEdge));
+
+// RTIC handles NVIC enabling automatically via #[task(binds = GPIO*_COMBINED_*)]
+```
+
 ## RTIC (Real-Time Interrupt-driven Concurrency)
 
 The project uses RTIC 2.x for task scheduling and resource management.
@@ -166,16 +197,26 @@ The project uses the `teensy-usbhost` crate for USB Host MIDI support. This is a
 - **Logging Callback**: `rust_log_info()` must be in the main app where the logger is initialized
 - **Timer Callback**: `rust_micros()` currently in main app (TODO: should be in teensy-usbhost once callback indirection issue is resolved)
 
-**Initialization Order (CRITICAL):**
-1. `init()` task sets up logging via `imxrt-log` (USB device mode)
-2. `usb_host_init` task waits **3 seconds** for logging to be fully operational
-3. USB host C++ code is initialized (calls into teensy-usbhost crate)
-4. `usb_host_test` task starts polling the USB host state machine
+**USB Host `task()` Function (CRITICAL):**
+The `usbhost::task()` function advances the USB state machine. **It only needs to be called:**
+1. **During enumeration** - in a loop until device connects (state machine advancement)
+2. **On USB interrupt** - when the USB_OTG2 interrupt fires (transfer init)
 
-**Why the delay matters:**
-- C++ code uses `rust_log_info()` callback to send logs back to Rust
-- If initialization runs before the USB logging poller is ready, logs are lost
-- The 3-second delay ensures reliable logging during USB host debugging
+**DO NOT call `task()` periodically after enumeration!** The state machine is event-driven:
+- Enumeration requires polling to advance the state machine
+- Once connected, only USB interrupts (transfer init) need to trigger `task()`
+- Periodic calls waste CPU and are unnecessary
+
+**Current Implementation:**
+- `usb_host_maintenance` task: Loops calling `task()` until device connects, then exits
+- `usb_host_isr` (USB_OTG2): Calls `task()` on USB transfer init interrupts
+- This provides optimal CPU usage while ensuring reliable operation
+
+**Initialization Order:**
+1. `init()` task sets up logging via `imxrt-log` (USB device mode)
+2. `usb_host_init` task initializes USB host C++ code
+3. `usb_host_maintenance` task loops calling `task()` until device enumerates
+4. Once connected, only `usb_host_isr` calls `task()` (interrupt-driven)
 
 ## Important Constants
 

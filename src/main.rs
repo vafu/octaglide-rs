@@ -25,6 +25,7 @@ mod core;
 mod midi;
 mod midi_fmt;
 mod usb_callbacks;
+mod usb_midi;
 
 #[macro_use]
 extern crate alloc;
@@ -35,7 +36,8 @@ mod app {
     use crate::{
         anim::animator::{Animator, Cmd},
         core::{Core, Input as CoreIn, MidiEvent},
-        midi::MidiBus,
+        midi::{Bus, MidiBus, UartMidiBus},
+        usb_midi::UsbMidiBus,
     };
     use board::t41 as brd;
     use embedded_alloc::LlffHeap as Heap;
@@ -51,7 +53,9 @@ mod app {
     use teensy4_bsp::{
         board,
         hal::{
+            gpio,
             iomuxc::{
+                self,
                 consts::Const,
                 lpuart::{self, Pin, Rx, Tx},
             },
@@ -79,7 +83,8 @@ mod app {
 
     #[shared]
     struct Shared {
-        midi_bus: MidiBus,
+        rx_bus: Bus, // UART input
+        tx_bus: Bus, // USB output
     }
 
     #[local]
@@ -87,6 +92,7 @@ mod app {
         led: board::Led,
         core: Core,
         poller: logging::Poller,
+        reset_btn: gpio::Input<pins::P14>,
     }
 
     #[global_allocator]
@@ -126,7 +132,8 @@ mod app {
 
         let board::Resources {
             mut gpio2,
-            pins,
+            mut gpio1,
+            mut pins,
             usb,
             lpuart6,
             ..
@@ -136,22 +143,39 @@ mod app {
         let (animator, animator_sender) = Animator::new();
         let (core_sender, core_receiver) = make_channel!(CoreIn, CORE_INPUT_CHANNEL_CAPACITY);
 
+        // Configure reset button (P14) with pulldown for interrupt on rising edge (button press to 3.3V)
+        // Wire momentary button from P14 to 3.3V
+        iomuxc::configure(
+            &mut pins.p14,
+            iomuxc::Config::zero().set_pull_keeper(Some(iomuxc::PullKeeper::Pullup100k)),
+        );
+        let reset_btn = gpio1.input(pins.p14);
+
+        // Enable GPIO interrupt on rising edge (button press)
+        gpio1.set_interrupt(&reset_btn, Some(gpio::Trigger::RisingEdge));
+
         midi_dispatch::spawn(midi_receiver).unwrap();
         animate::spawn(animator, core_sender.clone()).unwrap();
-        core_task::spawn(core_receiver).ok();
-        usb_host_init::spawn(core_sender.clone()).ok();
+        core_task::spawn(core_receiver).unwrap();
+        usb_host_init::spawn().unwrap();
+
+        // Create UART bus for RX
+        let uart_bus =
+            UartMidiBus::new(prepare_uart(lpuart6, pins.p1, pins.p0), core_sender.clone());
+
+        // Create USB bus for TX
+        let usb_bus = UsbMidiBus::new();
 
         (
             Shared {
-                midi_bus: MidiBus::new(
-                    prepare_uart(lpuart6, pins.p1, pins.p0),
-                    core_sender.clone(),
-                ),
+                rx_bus: Bus::Uart(uart_bus),
+                tx_bus: Bus::Usb(usb_bus),
             },
             Local {
                 led: board::led(&mut gpio2, pins.p13),
                 core: Core::new(midi_sender, animator_sender),
                 poller: logging::log::usbd(usb, logging::Interrupts::Enabled).unwrap(),
+                reset_btn,
             },
         )
     }
@@ -162,17 +186,17 @@ mod app {
             cortex_m::asm::wfi();
         }
     }
-    #[task(binds = LPUART6, shared = [midi_bus], priority = 2)]
+    #[task(binds = LPUART6, shared = [rx_bus], priority = 2)]
     fn midi_handler(mut cx: midi_handler::Context) {
-        cx.shared.midi_bus.lock(|midi| midi.handle_interrupt());
+        cx.shared.rx_bus.lock(|bus| bus.poll());
     }
 
-    #[task(shared = [midi_bus], priority = 2)]
+    #[task(shared = [tx_bus], priority = 2)]
     async fn midi_dispatch(mut cx: midi_dispatch::Context, mut r: MidiReceiver) -> ! {
         loop {
             let msg = r.recv().await.unwrap();
-            cx.shared.midi_bus.lock(|midi| {
-                midi.send(&msg);
+            cx.shared.tx_bus.lock(|bus| {
+                bus.send(&msg);
             });
         }
     }
@@ -202,25 +226,45 @@ mod app {
 
     #[task(priority = 1)]
     #[allow(static_mut_refs)]
-    async fn usb_host_init(_cx: usb_host_init::Context, sender: CoreSender) {
-        info!("usb_host_init: waiting 3 seconds for USB logging to be ready...");
-        Systick::delay(3000.millis()).await;
-
-        unsafe {
-            usbhost::init();
-        };
-        usb_host_test::spawn(sender).ok();
+    async fn usb_host_init(_cx: usb_host_init::Context) {
+        usbhost::init();
     }
 
-    #[task(binds = USB_OTG2, priority = 2)]
-    fn usb_host_isr(_cx: usb_host_isr::Context) {
-        unsafe {
-            usbhost::usb_isr();
+    /// USB Host periodic maintenance task
+    #[task(priority = 1)]
+    async fn usb_host_maintenance(_cx: usb_host_maintenance::Context) {
+        loop {
+            usbhost::task();
+
+            // Check connection status
+            let connected = usbhost::midi_connected();
+
+            if connected {
+                let (vendor, product) = usbhost::get_device_info();
+                info!(
+                    "USB MIDI device CONNECTED - VID:{:04X} PID:{:04X}",
+                    vendor, product
+                );
+                return;
+            }
+            // Sleep to avoid burning CPU - only need to service timers/timeouts
+            Systick::delay(10.millis()).await;
         }
     }
 
-    #[task(binds = USB_OTG1, local = [poller])]
-    fn usb_interrupt(cx: usb_interrupt::Context) {
+    /// USB Host interrupt handler
+    #[task(binds = USB_OTG2, shared = [tx_bus], priority = 2)]
+    fn usb_host_isr(_cx: usb_host_isr::Context) {
+        usbhost::usb_isr();
+        if !usbhost::midi_connected() {
+            // TODO: sucks, need to make a proper device state management later.
+            // .ok() here is needed so the system avoids spawning another maintenance task while enumerating.
+            usb_host_maintenance::spawn().ok();
+        }
+    }
+
+    #[task(binds = USB_OTG1, local = [poller], priority = 2)]
+    fn otg_interrupt(cx: otg_interrupt::Context) {
         cx.local.poller.poll();
     }
 
@@ -232,80 +276,16 @@ mod app {
         led.clear();
     }
 
-    // All WIP and test stuff goes here:
-    #[task(priority = 2)]
-    async fn usb_host_test(_cx: usb_host_test::Context, _sender: CoreSender) -> ! {
-        info!("usb_host_test: starting USB MIDI output test loop");
-
-        let mut note = 60u8; // Start at middle C
-        let channel = 1; // MIDI channel 1 (0-indexed)
-        let velocity = 100;
-        let mut last_connected = false;
-        let mut note_timer = 0u32; // Count poll cycles for note timing
-
-        loop {
-            // CRITICAL: Must call task() every iteration to process USB transfers
-            unsafe {
-                usbhost::task();
-            }
-
-            // Check connection status
-            let connected = unsafe { usbhost::midi_connected() };
-
-            if connected != last_connected {
-                if connected {
-                    let (vendor, product) = unsafe { usbhost::get_device_info() };
-                    info!(
-                        "USB MIDI device CONNECTED - VID:{:04X} PID:{:04X}",
-                        vendor, product
-                    );
-                    note_timer = 0; // Reset timer on connect
-                } else {
-                    info!("USB MIDI device DISCONNECTED");
-                }
-                last_connected = connected;
-            }
-
-            // Only send notes if device is connected
-            if connected {
-                note_timer += 1;
-
-                // Send note every 100 polls (~1 second at 10ms intervals)
-                if note_timer == 1 {
-                    unsafe {
-                        info!(
-                            "Sending USB MIDI: NoteOn  note={} vel={} ch={}",
-                            note, velocity, channel
-                        );
-                        usbhost::send_note_on(note, velocity, channel);
-                    }
-                } else if note_timer == 50 {
-                    unsafe {
-                        info!(
-                            "Sending USB MIDI: NoteOff note={} vel={} ch={}",
-                            note, velocity, channel
-                        );
-                        usbhost::send_note_off(note, velocity, channel);
-                    }
-                } else if note_timer >= 100 {
-                    // Move to next note (cycle through C major scale)
-                    note = match note {
-                        60 => 62, // C -> D
-                        62 => 64, // D -> E
-                        64 => 65, // E -> F
-                        65 => 67, // F -> G
-                        67 => 69, // G -> A
-                        69 => 71, // A -> B
-                        71 => 72, // B -> C
-                        _ => 60,  // C (octave up) -> back to C
-                    };
-                    note_timer = 0; // Reset for next note
-                }
-            }
-            // Yield to other tasks occasionally (Task() needs to run frequently for USB transfers)
-            if (note_timer % 10) == 0 {
-                Systick::delay(10.millis()).await;
-            }
+    /// Reset button interrupt handler
+    ///
+    /// P14 (GPIO1_IO18) with pulldown - wire button from P14 to 3.3V
+    /// Triggers on rising edge, immediately resets the MCU
+    #[task(binds = GPIO1_COMBINED_16_31, local = [reset_btn], priority = 2)]
+    fn reset_button_isr(cx: reset_button_isr::Context) {
+        let btn = cx.local.reset_btn;
+        if btn.is_triggered() {
+            btn.clear_triggered();
+            cortex_m::peripheral::SCB::sys_reset();
         }
     }
 }
