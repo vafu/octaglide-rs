@@ -1,22 +1,7 @@
-use core::fmt::Debug;
-
-use enum_dispatch::enum_dispatch;
 use heapless::Vec;
 use midi_msg::{Channel, ChannelVoiceMsg, MidiMsg};
 
-pub type Messages = Option<Vec<MidiMsg, 3>>;
-
-#[enum_dispatch]
-pub trait Modulation {
-    fn animate(&mut self, progress: f32, depth: f32, offset: f32) -> Messages;
-    fn reset(&mut self) -> Messages;
-}
-
-#[derive(Debug)]
-#[enum_dispatch(Modulation)]
-pub enum Modulator {
-    Glide,
-}
+use super::{Messages, Modulation};
 
 const PITCHBEND_CENTER: f32 = 8192.0;
 const PITCHBEND_MAX: u16 = PITCHBEND_CENTER as u16 * 2;
@@ -38,6 +23,7 @@ pub struct Glide {
     to: u8,
     active_note: u8,
 }
+
 impl Glide {
     pub fn new(ch: Channel, from: u8, to: u8) -> Self {
         Self {
@@ -152,4 +138,3 @@ impl Modulation for Glide {
         Some(messages)
     }
 }
-

@@ -5,6 +5,7 @@ use alloc::{boxed::Box, vec::Vec};
 use log::info;
 use midi_msg::{MidiMsg, ParseError};
 
+use crate::core::consumers::ModTrigger;
 use crate::midi_fmt::MidiFmt;
 
 /// MIDI message with metadata about its origin and context
@@ -69,8 +70,9 @@ impl Core {
     pub fn new(midi_sender: MidiSender, animator_sender: AnimatorSender) -> Self {
         let transformers: Vec<Box<dyn MidiTransformer>> = vec![Box::new(OctaveShifter::new())];
         let consumers: Vec<Box<dyn Consumer>> = vec![
+            Box::new(ModTrigger::new()),
             Box::new(Glider::new()),
-            Box::new(Passthrough::new()), // LAST: routes all unconsumed events
+            Box::new(Passthrough::new()),
         ];
         Core {
             midi_sender,
@@ -115,32 +117,38 @@ impl Core {
                 }
 
                 let mut event = event;
+                let mut all_outputs: heapless::Vec<Output, 32> = heapless::Vec::new();
+
                 // Process the event through consumers (serial chain with early exit)
                 for c in self.consumers.iter_mut() {
                     use consumers::ConsumeResult;
 
                     match c.consume(event) {
                         ConsumeResult::Consumed(outputs) => {
-                            // Process outputs and stop consuming chain
-                            for out in outputs {
-                                match out {
-                                    Output::SendMidi(msg) => {
-                                        self.midi_sender.send(msg.clone()).await.unwrap();
-                                    }
-                                    Output::BlinkLed => {
-                                        crate::app::blink_led::spawn().ok();
-                                    }
-                                    Output::Animate(cmd) => {
-                                        self.animator_sender.send(cmd).await.unwrap();
-                                    }
-                                }
-                            }
+                            // Collect outputs and stop consuming chain
+                            all_outputs.extend(outputs);
                             break; // Don't pass to other consumers
                         }
-                        ConsumeResult::Ignored(ev) => {
-                            // Continue to next consumer
+                        ConsumeResult::Ignored(ev, outputs) => {
+                            // Collect outputs but continue to next consumer
+                            all_outputs.extend(outputs);
                             event = ev;
                             continue;
+                        }
+                    }
+                }
+
+                // Process all accumulated outputs
+                for out in all_outputs {
+                    match out {
+                        Output::SendMidi(msg) => {
+                            self.midi_sender.send(msg.clone()).await.unwrap();
+                        }
+                        Output::BlinkLed => {
+                            crate::app::blink_led::spawn().ok();
+                        }
+                        Output::Animate(cmd) => {
+                            self.animator_sender.send(cmd).await.unwrap();
                         }
                     }
                 }

@@ -13,7 +13,15 @@ pub enum ConsumeResult {
     /// Event was consumed - do not pass to other consumers
     Consumed(CoreOutput),
     /// Event was ignored - ownership returned to caller for next consumer
-    Ignored(MidiEvent),
+    /// Optionally produces outputs (e.g., triggering animations) while passing event along
+    Ignored(MidiEvent, CoreOutput),
+}
+
+impl ConsumeResult {
+    /// Create an Ignored result with no outputs (most common case)
+    pub fn ignored(event: MidiEvent) -> Self {
+        ConsumeResult::Ignored(event, Vec::new())
+    }
 }
 
 pub trait Consumer {
@@ -32,3 +40,6 @@ pub use self::glider::Glider;
 
 pub mod passthrough;
 pub use self::passthrough::Passthrough;
+
+pub mod mod_trigger;
+pub use self::mod_trigger::ModTrigger;

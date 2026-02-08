@@ -92,7 +92,7 @@ impl super::Consumer for Glider {
         let mut res = Vec::new();
 
         let MidiMsg::ChannelVoice { channel, msg } = event.msg else {
-            return ConsumeResult::Ignored(event);
+            return ConsumeResult::ignored(event);
         };
 
         // Synthetic messages: pass through with filtering
@@ -127,7 +127,7 @@ impl super::Consumer for Glider {
             }
 
             // Ignore other messages (CC, PitchBend, etc.) - let passthrough handle them
-            _ => ConsumeResult::Ignored(event),
+            _ => ConsumeResult::ignored(event),
         }
     }
 }
