@@ -1,9 +1,8 @@
 mod consumers;
 mod transformers;
 
-use alloc::{boxed::Box, vec::Vec};
 use log::info;
-use midi_msg::{MidiMsg, ParseError};
+use midi_msg::MidiMsg;
 
 use crate::core::consumers::ModTrigger;
 use crate::midi_fmt::MidiFmt;
@@ -39,19 +38,23 @@ impl MidiEvent {
 }
 
 use crate::{
-    anim::animator::Cmd,
-    app::{AnimatorSender, MidiSender},
+    app::{Animator, MidiSender},
     core::{
         consumers::{Consumer, Glider, Passthrough},
         transformers::{MidiTransformer, OctaveShifter},
     },
 };
 
+/// Consumer instances (concrete types to avoid dyn-compatibility issues with async)
+struct Consumers {
+    mod_trigger: ModTrigger,
+    glider: Glider,
+    passthrough: Passthrough,
+}
+
 pub struct Core {
-    midi_sender: MidiSender,
-    animator_sender: AnimatorSender,
-    transformers: Vec<Box<dyn MidiTransformer>>,
-    consumers: Vec<Box<dyn Consumer>>,
+    octave_shifter: OctaveShifter,
+    consumers: Consumers,
 }
 
 #[derive(Debug)]
@@ -59,49 +62,32 @@ pub enum Input {
     Process(MidiEvent),
 }
 
-#[derive(Debug)]
-pub enum Output {
-    SendMidi(MidiMsg),
-    Animate(Cmd),
-    BlinkLed,
-}
-
 impl Core {
-    pub fn new(midi_sender: MidiSender, animator_sender: AnimatorSender) -> Self {
-        let transformers: Vec<Box<dyn MidiTransformer>> = vec![Box::new(OctaveShifter::new())];
-        let consumers: Vec<Box<dyn Consumer>> = vec![
-            Box::new(ModTrigger::new()),
-            Box::new(Glider::new()),
-            Box::new(Passthrough::new()),
-        ];
+    pub fn new(
+        midi_sender: MidiSender,
+        glide_animator: Animator,
+        envelope_animator: Animator,
+    ) -> Self {
         Core {
-            midi_sender,
-            animator_sender,
-            transformers,
-            consumers,
+            octave_shifter: OctaveShifter::new(),
+            consumers: Consumers {
+                mod_trigger: ModTrigger::new(envelope_animator),
+                glider: Glider::new(midi_sender.clone(), glide_animator),
+                passthrough: Passthrough::new(midi_sender),
+            },
         }
     }
 
     pub async fn process(&mut self, input: Input) {
         match input {
             Input::Process(mut event) => {
-                // Handle parse errors
-
                 // Apply transformers only to user MIDI
-                let transformed_msg = if !event.synthetic {
-                    match self
-                        .transformers
-                        .iter_mut()
-                        .try_fold(event.msg, |m, p| p.process(m))
-                    {
-                        Some(m) => m,
+                if !event.synthetic {
+                    match self.octave_shifter.process(event.msg) {
+                        Some(m) => event.msg = m,
                         None => return, // Transformer filtered it out
                     }
-                } else {
-                    event.msg
-                };
-
-                event.msg = transformed_msg;
+                }
 
                 // Format and log event
                 // Skip logging PitchBend to avoid noise
@@ -116,40 +102,12 @@ impl Core {
                     info!("<<< {}{}", MidiFmt(&event.msg), synthetic);
                 }
 
-                let mut event = event;
-                let mut all_outputs: heapless::Vec<Output, 32> = heapless::Vec::new();
-
-                // Process the event through consumers (serial chain with early exit)
-                for c in self.consumers.iter_mut() {
-                    use consumers::ConsumeResult;
-
-                    match c.consume(event) {
-                        ConsumeResult::Consumed(outputs) => {
-                            // Collect outputs and stop consuming chain
-                            all_outputs.extend(outputs);
-                            break; // Don't pass to other consumers
-                        }
-                        ConsumeResult::Ignored(ev, outputs) => {
-                            // Collect outputs but continue to next consumer
-                            all_outputs.extend(outputs);
-                            event = ev;
-                            continue;
-                        }
-                    }
-                }
-
-                // Process all accumulated outputs
-                for out in all_outputs {
-                    match out {
-                        Output::SendMidi(msg) => {
-                            self.midi_sender.send(msg.clone()).await.unwrap();
-                        }
-                        Output::BlinkLed => {
-                            crate::app::blink_led::spawn().ok();
-                        }
-                        Output::Animate(cmd) => {
-                            self.animator_sender.send(cmd).await.unwrap();
-                        }
+                // Process through consumer chain: ModTrigger -> Glider -> Passthrough
+                let event = self.consumers.mod_trigger.consume(event).await;
+                if let Some(event) = event {
+                    let event = self.consumers.glider.consume(event).await;
+                    if let Some(event) = event {
+                        self.consumers.passthrough.consume(event).await;
                     }
                 }
             }

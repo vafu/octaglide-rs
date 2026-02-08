@@ -2,11 +2,12 @@
 #![no_main]
 
 use ::core::panic::PanicInfo;
+use cortex_m::interrupt;
 
 #[panic_handler]
 #[allow(static_mut_refs)]
 fn panic(info: &PanicInfo) -> ! {
-    cortex_m::interrupt::disable();
+    interrupt::disable();
     log::error!("{}", info);
     unsafe {
         if let Some(poller) = app::POLLER.as_mut() {
@@ -14,10 +15,12 @@ fn panic(info: &PanicInfo) -> ! {
                 poller.poll();
                 cortex_m::asm::delay(10000);
             }
+
+            teensy4_panic::sos()
+        } else {
+            loop {}
         }
     }
-
-    teensy4_panic::sos()
 }
 
 mod anim;
@@ -27,14 +30,13 @@ mod midi_fmt;
 mod usb_callbacks;
 mod usb_midi;
 
-#[macro_use]
 extern crate alloc;
 
 #[rtic::app(device = teensy4_bsp, peripherals = true, dispatchers = [KPP, GPT1])]
 mod app {
 
     use crate::{
-        anim::animator::{Animator, Cmd},
+        anim::animator::{AnimationEngine, Cmd},
         core::{Core, Input as CoreIn, MidiEvent},
         midi::{Bus, MidiBus, UartMidiBus},
         midi_fmt::MidiFmt,
@@ -76,7 +78,7 @@ mod app {
     // Channel type aliases
     pub type MidiSender = Sender<'static, MidiMsg, MIDI_CHANNEL_CAPACITY>;
     pub type MidiReceiver = Receiver<'static, MidiMsg, MIDI_CHANNEL_CAPACITY>;
-    pub type AnimatorSender = Sender<'static, Cmd, 1>;
+    pub type Animator = Sender<'static, Cmd, 1>;
     pub type CoreSender = Sender<'static, CoreIn, CORE_INPUT_CHANNEL_CAPACITY>;
     pub type CoreReceiver = Receiver<'static, CoreIn, CORE_INPUT_CHANNEL_CAPACITY>;
 
@@ -92,7 +94,6 @@ mod app {
     struct Local {
         led: board::Led,
         core: Core,
-        poller: logging::Poller,
         reset_btn: gpio::Input<pins::P14>,
     }
 
@@ -122,9 +123,9 @@ mod app {
     }
 
     #[init]
+    #[allow(static_mut_refs)]
     fn init(cx: init::Context) -> (Shared, Local) {
         init_heap();
-
         Systick::start(
             cx.core.SYST,
             board::ARM_FREQUENCY,
@@ -140,10 +141,21 @@ mod app {
             ..
         } = brd(cx.device);
 
+        let poller = logging::log::usbd(usb, logging::Interrupts::Enabled).unwrap();
+        crate::interrupt::free(|_| unsafe {
+            POLLER = Some(poller);
+        });
+
         let (midi_sender, midi_receiver) = make_channel!(MidiMsg, MIDI_CHANNEL_CAPACITY);
-        let (animator, animator_sender) = Animator::new();
         let (core_sender, core_receiver) = make_channel!(CoreIn, CORE_INPUT_CHANNEL_CAPACITY);
 
+        let (glide_animator, glide_cmd_rx) = make_channel!(Cmd, 1);
+        let glide_engine = AnimationEngine::new(glide_cmd_rx);
+        animate_glide::spawn(glide_engine, core_sender.clone()).unwrap();
+
+        let (envelope_animator, envelope_cmd_rx) = make_channel!(Cmd, 1);
+        let envelope_engine = AnimationEngine::new(envelope_cmd_rx);
+        animate_envelope::spawn(envelope_engine, core_sender.clone()).unwrap();
         // Configure reset button (P14) with pulldown for interrupt on rising edge (button press to 3.3V)
         // Wire momentary button from P14 to 3.3V
         iomuxc::configure(
@@ -156,7 +168,6 @@ mod app {
         gpio1.set_interrupt(&reset_btn, Some(gpio::Trigger::RisingEdge));
 
         midi_dispatch::spawn(midi_receiver).unwrap();
-        animate::spawn(animator, core_sender.clone()).unwrap();
         core_task::spawn(core_receiver).unwrap();
         usb_host_init::spawn().unwrap();
 
@@ -174,8 +185,7 @@ mod app {
             },
             Local {
                 led: board::led(&mut gpio2, pins.p13),
-                core: Core::new(midi_sender, animator_sender),
-                poller: logging::log::usbd(usb, logging::Interrupts::Enabled).unwrap(),
+                core: Core::new(midi_sender, glide_animator, envelope_animator),
                 reset_btn,
             },
         )
@@ -211,9 +221,31 @@ mod app {
         }
     }
     #[task(priority = 2)]
-    async fn animate(_cx: animate::Context, mut animator: Animator, mut sender: CoreSender) -> ! {
+    async fn animate_glide(
+        _cx: animate_glide::Context,
+        mut engine: AnimationEngine,
+        mut sender: CoreSender,
+    ) -> ! {
         loop {
-            if let Some(msgs) = animator.tick().await {
+            if let Some(msgs) = engine.tick().await {
+                for msg in msgs {
+                    sender
+                        .send(CoreIn::Process(MidiEvent::synthetic(msg)))
+                        .await
+                        .ok();
+                }
+            }
+        }
+    }
+
+    #[task(priority = 2)]
+    async fn animate_envelope(
+        _cx: animate_envelope::Context,
+        mut engine: AnimationEngine,
+        mut sender: CoreSender,
+    ) -> ! {
+        loop {
+            if let Some(msgs) = engine.tick().await {
                 for msg in msgs {
                     sender
                         .send(CoreIn::Process(MidiEvent::synthetic(msg)))
@@ -273,9 +305,16 @@ mod app {
         }
     }
 
-    #[task(binds = USB_OTG1, local = [poller], priority = 2)]
-    fn otg_interrupt(cx: otg_interrupt::Context) {
-        cx.local.poller.poll();
+    #[task(binds = USB_OTG1, priority = 2)]
+    #[allow(static_mut_refs)]
+    fn otg_interrupt(_cx: otg_interrupt::Context) {
+        unsafe {
+            crate::interrupt::free(|_| {
+                if let Some(p) = POLLER.as_mut() {
+                    p.poll();
+                }
+            });
+        }
     }
 
     #[task(local = [led], priority = 1)]

@@ -1,21 +1,18 @@
-use heapless::Vec;
+use crate::{app::MidiSender, core::MidiEvent};
 
-use crate::core::{MidiEvent, Output};
-
-use super::{ConsumeResult, CoreOutput};
-
-pub struct Passthrough;
+pub struct Passthrough {
+    midi_sender: MidiSender,
+}
 
 impl Passthrough {
-    pub fn new() -> Self {
-        Self
+    pub fn new(midi_sender: MidiSender) -> Self {
+        Self { midi_sender }
     }
 }
 
 impl super::Consumer for Passthrough {
-    fn consume(&mut self, event: MidiEvent) -> ConsumeResult {
-        let mut res: CoreOutput = Vec::new();
-        res.push(Output::SendMidi(event.msg)).ok();
-        ConsumeResult::Consumed(res)
+    async fn consume(&mut self, event: MidiEvent) -> Option<MidiEvent> {
+        self.midi_sender.send(event.msg).await.unwrap();
+        None
     }
 }

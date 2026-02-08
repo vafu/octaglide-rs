@@ -1,4 +1,3 @@
-use heapless::Vec;
 use midi_msg::MidiMsg;
 
 use crate::{
@@ -6,38 +5,40 @@ use crate::{
         animator::Cmd,
         modulators::{Envelope, Modulator},
     },
-    core::{Output, consumers::ConsumeResult},
+    app::Animator,
 };
 
-pub struct ModTrigger;
+pub struct ModTrigger {
+    animator: Animator,
+}
 
 impl ModTrigger {
-    pub fn new() -> Self {
-        Self
+    pub fn new(animator: Animator) -> Self {
+        Self { animator }
     }
 }
 
 impl super::Consumer for ModTrigger {
-    fn consume(&mut self, event: crate::core::MidiEvent) -> ConsumeResult {
+    async fn consume(&mut self, event: crate::core::MidiEvent) -> Option<crate::core::MidiEvent> {
         if event.synthetic {
-            return ConsumeResult::ignored(event);
+            return Some(event);
         }
 
         let MidiMsg::ChannelVoice { channel, msg } = event.msg else {
-            return ConsumeResult::ignored(event);
+            return Some(event);
         };
 
         match msg {
             midi_msg::ChannelVoiceMsg::NoteOn { .. } => {
-                let mut result = Vec::new();
-                let _ = result.push(Output::Animate(Cmd::Start(Modulator::Envelope(
-                    Envelope::new(channel, 2),
-                ))));
+                self.animator
+                    .send(Cmd::Start(Modulator::Envelope(Envelope::new(channel, 2))))
+                    .await
+                    .unwrap();
 
-                ConsumeResult::Ignored(event, result)
+                Some(event)
             }
 
-            _ => ConsumeResult::ignored(event),
+            _ => Some(event),
         }
     }
 }

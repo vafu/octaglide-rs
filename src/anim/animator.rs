@@ -4,12 +4,9 @@ use rtic_monotonics::{
     Monotonic,
     systick::{ExtU32, Systick, fugit::Instant},
 };
-use rtic_sync::{channel::Receiver, make_channel};
+use rtic_sync::channel::Receiver;
 
-use crate::{
-    anim::modulators::{Messages, Modulator},
-    app::AnimatorSender,
-};
+use crate::anim::modulators::{Messages, Modulator};
 
 use super::modulators::Modulation;
 
@@ -22,7 +19,7 @@ pub enum Cmd {
 }
 
 #[derive(Debug)]
-pub struct Animator {
+pub struct AnimationEngine {
     rx: Receiver<'static, Cmd, 1>,
     looping: bool,
     duration: u32,
@@ -43,20 +40,16 @@ enum State {
 
 const MSG_INTERVAL_MS: u32 = 5;
 
-impl Animator {
-    pub fn new() -> (Self, AnimatorSender) {
-        let (tx, rx) = make_channel!(Cmd, 1);
-        (
-            Animator {
-                rx,
-                looping: false,
-                duration: 100,
-                state: State::Idle,
-                _depth: 1.0, // Default depth (full intensity)
-                modulator: None,
-            },
-            tx,
-        )
+impl AnimationEngine {
+    pub fn new(rx: Receiver<'static, Cmd, 1>) -> Self {
+        AnimationEngine {
+            rx,
+            looping: false,
+            duration: 100,
+            state: State::Idle,
+            _depth: 1.0, // Default depth (full intensity)
+            modulator: None,
+        }
     }
 
     pub async fn tick(&mut self) -> Messages {
