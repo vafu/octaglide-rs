@@ -69,18 +69,38 @@ mod app {
     };
 
     pub type MidiUart = Lpuart<Pins<pins::P1, pins::P0>, 6>;
-
-    const HEAP_SIZE: usize = 1024;
-    const MIDI_BAUD: u32 = 31250;
-    const MIDI_CHANNEL_CAPACITY: usize = 16;
-    const CORE_INPUT_CHANNEL_CAPACITY: usize = 16;
-
-    // Channel type aliases
     pub type MidiSender = Sender<'static, MidiMsg, MIDI_CHANNEL_CAPACITY>;
     pub type MidiReceiver = Receiver<'static, MidiMsg, MIDI_CHANNEL_CAPACITY>;
     pub type Animator = Sender<'static, Cmd, 1>;
     pub type CoreSender = Sender<'static, CoreIn, CORE_INPUT_CHANNEL_CAPACITY>;
     pub type CoreReceiver = Receiver<'static, CoreIn, CORE_INPUT_CHANNEL_CAPACITY>;
+
+    macro_rules! make_animator {
+        ($task_name:ident, $core_sender:expr) => {{
+            let (animator, cmd_rx) = make_channel!(Cmd, 1);
+            let engine = AnimationEngine::new(cmd_rx);
+            $task_name::spawn(engine, $core_sender.clone()).unwrap();
+            animator
+        }};
+    }
+
+    async fn run_animator_loop(mut engine: AnimationEngine, mut sender: CoreSender) -> ! {
+        loop {
+            if let Some(msgs) = engine.tick().await {
+                for msg in msgs {
+                    sender
+                        .send(CoreIn::Process(MidiEvent::synthetic(msg)))
+                        .await
+                        .ok();
+                }
+            }
+        }
+    }
+
+    const HEAP_SIZE: usize = 1024;
+    const MIDI_BAUD: u32 = 31250;
+    const MIDI_CHANNEL_CAPACITY: usize = 16;
+    const CORE_INPUT_CHANNEL_CAPACITY: usize = 16;
 
     pub(crate) static mut POLLER: Option<logging::Poller> = None;
 
@@ -149,13 +169,9 @@ mod app {
         let (midi_sender, midi_receiver) = make_channel!(MidiMsg, MIDI_CHANNEL_CAPACITY);
         let (core_sender, core_receiver) = make_channel!(CoreIn, CORE_INPUT_CHANNEL_CAPACITY);
 
-        let (glide_animator, glide_cmd_rx) = make_channel!(Cmd, 1);
-        let glide_engine = AnimationEngine::new(glide_cmd_rx);
-        animate_glide::spawn(glide_engine, core_sender.clone()).unwrap();
+        let glide_animator = make_animator!(animate_glide, core_sender);
+        let envelope_animator = make_animator!(animate_envelope, core_sender);
 
-        let (envelope_animator, envelope_cmd_rx) = make_channel!(Cmd, 1);
-        let envelope_engine = AnimationEngine::new(envelope_cmd_rx);
-        animate_envelope::spawn(envelope_engine, core_sender.clone()).unwrap();
         // Configure reset button (P14) with pulldown for interrupt on rising edge (button press to 3.3V)
         // Wire momentary button from P14 to 3.3V
         iomuxc::configure(
@@ -218,41 +234,6 @@ mod app {
                 }
                 bus.send(&msg);
             });
-        }
-    }
-    #[task(priority = 2)]
-    async fn animate_glide(
-        _cx: animate_glide::Context,
-        mut engine: AnimationEngine,
-        mut sender: CoreSender,
-    ) -> ! {
-        loop {
-            if let Some(msgs) = engine.tick().await {
-                for msg in msgs {
-                    sender
-                        .send(CoreIn::Process(MidiEvent::synthetic(msg)))
-                        .await
-                        .ok();
-                }
-            }
-        }
-    }
-
-    #[task(priority = 2)]
-    async fn animate_envelope(
-        _cx: animate_envelope::Context,
-        mut engine: AnimationEngine,
-        mut sender: CoreSender,
-    ) -> ! {
-        loop {
-            if let Some(msgs) = engine.tick().await {
-                for msg in msgs {
-                    sender
-                        .send(CoreIn::Process(MidiEvent::synthetic(msg)))
-                        .await
-                        .ok();
-                }
-            }
         }
     }
 
@@ -336,5 +317,24 @@ mod app {
             btn.clear_triggered();
             cortex_m::peripheral::SCB::sys_reset();
         }
+    }
+
+    // ANIMATION BOILERPLATE
+    #[task(priority = 2)]
+    async fn animate_envelope(
+        _cx: animate_envelope::Context,
+        engine: AnimationEngine,
+        sender: CoreSender,
+    ) -> ! {
+        run_animator_loop(engine, sender).await
+    }
+
+    #[task(priority = 2)]
+    async fn animate_glide(
+        _cx: animate_glide::Context,
+        engine: AnimationEngine,
+        sender: CoreSender,
+    ) -> ! {
+        run_animator_loop(engine, sender).await
     }
 }
