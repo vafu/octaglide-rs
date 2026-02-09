@@ -16,11 +16,14 @@ use crate::{
 };
 
 const MAX_HELD_NOTES: usize = 8;
+
+#[derive(Debug)]
 pub struct Glider {
     held_notes: Vec<u8, MAX_HELD_NOTES>,
     midi_sender: MidiSender,
     animator: Animator,
 }
+
 impl Glider {
     pub fn new(midi_sender: MidiSender, animator: Animator) -> Self {
         Glider {

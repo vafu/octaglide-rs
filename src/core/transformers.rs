@@ -1,10 +1,20 @@
+use enum_dispatch::enum_dispatch;
 use midi_msg::{ChannelVoiceMsg, ControlChange, MidiMsg};
 
 const OCTAVE_OFFSET: i8 = 12;
+
+#[enum_dispatch]
 pub trait MidiTransformer {
     fn process(&mut self, msg: MidiMsg) -> Option<MidiMsg>;
 }
 
+#[enum_dispatch(MidiTransformer)]
+#[derive(Debug)]
+pub enum Transformers {
+    OctaveShifter,
+}
+
+#[derive(Debug)]
 pub struct OctaveShifter {
     offset: i8,
 }

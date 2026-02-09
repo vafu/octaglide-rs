@@ -1,5 +1,6 @@
 use crate::{app::MidiSender, core::MidiEvent};
 
+#[derive(Debug)]
 pub struct Passthrough {
     midi_sender: MidiSender,
 }

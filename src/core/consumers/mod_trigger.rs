@@ -8,6 +8,7 @@ use crate::{
     app::Animator,
 };
 
+#[derive(Debug)]
 pub struct ModTrigger {
     animator: Animator,
 }

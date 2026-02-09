@@ -1,10 +1,11 @@
 mod consumers;
 mod transformers;
 
+use alloc::vec;
 use log::info;
 use midi_msg::MidiMsg;
 
-use crate::core::consumers::ModTrigger;
+use crate::core::{consumers::ModTrigger, transformers::Transformers};
 use crate::midi_fmt::MidiFmt;
 
 /// MIDI message with metadata about its origin and context
@@ -28,38 +29,33 @@ impl MidiEvent {
             synthetic: true,
         }
     }
-
-    pub fn usb(msg: MidiMsg) -> Self {
-        Self {
-            msg,
-            synthetic: false,
-        }
-    }
 }
 
 use crate::{
     app::{Animator, MidiSender},
     core::{
-        consumers::{Consumer, Glider, Passthrough},
+        consumers::{Consumer, Consumers, Glider, Passthrough},
         transformers::{MidiTransformer, OctaveShifter},
     },
 };
-
-/// Consumer instances (concrete types to avoid dyn-compatibility issues with async)
-struct Consumers {
-    mod_trigger: ModTrigger,
-    glider: Glider,
-    passthrough: Passthrough,
-}
+use heapless::Vec;
 
 pub struct Core {
-    octave_shifter: OctaveShifter,
-    consumers: Consumers,
+    transformers: Vec<Transformers, 8>,
+    consumers: Vec<Consumers, 8>,
 }
 
 #[derive(Debug)]
 pub enum Input {
     Process(MidiEvent),
+}
+
+macro_rules! vec {
+    ($($item:expr),* $(,)?) => {{
+        let mut v = Vec::new();
+        $(v.push($item).unwrap();)*
+        v
+    }};
 }
 
 impl Core {
@@ -68,13 +64,16 @@ impl Core {
         glide_animator: Animator,
         envelope_animator: Animator,
     ) -> Self {
+        let transformers = vec![Transformers::OctaveShifter(OctaveShifter::new())];
+        let consumers = vec![
+            Consumers::ModTrigger(ModTrigger::new(envelope_animator)),
+            Consumers::Glider(Glider::new(midi_sender.clone(), glide_animator)),
+            Consumers::Passthrough(Passthrough::new(midi_sender)),
+        ];
+
         Core {
-            octave_shifter: OctaveShifter::new(),
-            consumers: Consumers {
-                mod_trigger: ModTrigger::new(envelope_animator),
-                glider: Glider::new(midi_sender.clone(), glide_animator),
-                passthrough: Passthrough::new(midi_sender),
-            },
+            transformers,
+            consumers,
         }
     }
 
@@ -83,34 +82,38 @@ impl Core {
             Input::Process(mut event) => {
                 // Apply transformers only to user MIDI
                 if !event.synthetic {
-                    match self.octave_shifter.process(event.msg) {
-                        Some(m) => event.msg = m,
-                        None => return, // Transformer filtered it out
+                    for transformer in &mut self.transformers {
+                        let Some(m) = transformer.process(event.msg) else {
+                            return;
+                        };
+                        event.msg = m;
                     }
                 }
 
-                // Format and log event
-                // Skip logging PitchBend to avoid noise
-                if !matches!(
-                    event.msg,
-                    MidiMsg::ChannelVoice {
-                        msg: midi_msg::ChannelVoiceMsg::PitchBend { .. },
-                        ..
-                    }
-                ) {
-                    let synthetic = if event.synthetic { " [synthetic]" } else { "" };
-                    info!("<<< {}{}", MidiFmt(&event.msg), synthetic);
-                }
+                log_event(&event);
 
-                // Process through consumer chain: ModTrigger -> Glider -> Passthrough
-                let event = self.consumers.mod_trigger.consume(event).await;
-                if let Some(event) = event {
-                    let event = self.consumers.glider.consume(event).await;
-                    if let Some(event) = event {
-                        self.consumers.passthrough.consume(event).await;
-                    }
+                // Process through consumer chain
+                let mut event = Some(event);
+                for consumer in &mut self.consumers {
+                    let Some(e) = event else { break };
+                    event = consumer.consume(e).await;
                 }
             }
         }
+    }
+}
+
+fn log_event(event: &MidiEvent) {
+    // Format and log event
+    // Skip logging PitchBend to avoid noise
+    if !matches!(
+        event.msg,
+        MidiMsg::ChannelVoice {
+            msg: midi_msg::ChannelVoiceMsg::PitchBend { .. },
+            ..
+        }
+    ) {
+        let synthetic = if event.synthetic { " [synthetic]" } else { "" };
+        info!("<<< {}{}", MidiFmt(&event.msg), synthetic);
     }
 }
