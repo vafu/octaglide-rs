@@ -83,9 +83,8 @@ impl Core {
                 // Apply transformers only to user MIDI
                 if !event.synthetic {
                     for transformer in &mut self.transformers {
-                        let Some(m) = transformer.process(event.msg) else {
-                            return;
-                        };
+                        let processed = transformer.process(event.msg);
+                        let Some(m) = processed else { return };
                         event.msg = m;
                     }
                 }
