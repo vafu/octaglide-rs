@@ -41,9 +41,14 @@ impl Glider {
         self.held_notes.push(note).unwrap();
 
         if let Some(from) = from_note {
-            // Start glide animation - it will handle the smooth transition
+            // Start glide animation - pass held_notes by value (stack copy)
             self.animator
-                .send(Cmd::Start(Modulator::Glide(Glide::new(channel, from, note))))
+                .send(Cmd::Start(Modulator::Glide(Glide::new(
+                    channel,
+                    from,
+                    note,
+                    self.held_notes.clone(),
+                ))))
                 .await
                 .unwrap();
         } else {
@@ -75,6 +80,7 @@ impl Glider {
                     channel,
                     released_note,
                     last_held,
+                    self.held_notes.clone(),
                 ))))
                 .await
                 .unwrap();
@@ -94,22 +100,9 @@ impl super::Consumer for Glider {
             return Some(event);
         };
 
-        // Synthetic messages: pass through with filtering
+        // Synthetic messages: pass through directly (filtering happens in modulator)
         if event.synthetic {
-            match msg {
-                NoteOff { note, .. } => {
-                    // Filter out NoteOff for held notes, allow for intermediate notes
-                    if !self.held_notes.contains(&note) {
-                        self.midi_sender.send(event.msg).await.unwrap();
-                    } else {
-                        info!("skip removing {}", &note);
-                    }
-                }
-                _ => {
-                    // Pass through all other synthetic messages (NoteOn, PitchBend, etc.)
-                    self.midi_sender.send(event.msg).await.unwrap();
-                }
-            }
+            self.midi_sender.send(event.msg).await.unwrap();
             return None;
         }
 

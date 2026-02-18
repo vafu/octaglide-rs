@@ -10,16 +10,71 @@ OctaglideRS is an embedded Rust MIDI processor that runs on a Teensy 4.1 microco
 
 **Task Management**: All project tasks and planning are managed via Backlog.md (see BACKLOG.MD MCP section at the bottom of this file)
 
+## Core Design Principles
+
+### 🎯 Portability First
+
+**CRITICAL**: As this project expands (display, hardware I/O, UI, more features), maintaining platform portability is a top priority. This ensures we can migrate to better-suited hardware if needed (better debugging, cost, availability, etc.).
+
+**Mandatory practices:**
+
+1. **Abstraction Layers** - Hide platform-specific code behind traits
+   ```rust
+   // ✅ GOOD: Platform-agnostic
+   pub trait MidiBus {
+       fn poll(&mut self);
+       fn send(&mut self, msg: &MidiMsg);
+   }
+
+   // ❌ BAD: Teensy types leak into core logic
+   pub fn process(uart: &mut Lpuart<...>) { ... }
+   ```
+
+2. **Separate HAL Code** - Keep board-specific initialization isolated
+   - ✅ All BSP/HAL code in `main.rs` or `src/hal/`
+   - ✅ Business logic in `src/core/`, `src/anim/`, etc.
+   - ❌ Never mix `teensy4_bsp` imports into core modules
+
+3. **Feature Flags for Platform Code**
+   ```toml
+   # Future: Support multiple platforms
+   [features]
+   teensy = ["teensy4-bsp", "imxrt-log"]
+   stm32h7 = ["stm32h7xx-hal", "defmt"]
+   ```
+
+4. **Prefer Platform-Agnostic Crates**
+   - ✅ `embedded-hal` traits
+   - ✅ `midi-msg` (no_std, pure Rust)
+   - ✅ `heapless` (no platform deps)
+   - ⚠️ Minimize C++ wrappers (like `teensy-usbhost`)
+   - ❌ Avoid platform-locked libraries
+
+5. **Document Hardware Requirements**
+   - When adding displays, IO, etc.: List abstract requirements (SPI, I2C, GPIO count)
+   - Don't assume Teensy-specific features
+
+**Why this matters:**
+- Teensy has limited debugging (JTAG-only, requires hardware mods)
+- Future features (display, UI) may exceed 512KB flash on smaller targets
+- Nucleo-F446RE (owned): 512KB flash, may be limiting
+- STM32H7 (2MB flash, SWD debug): Better target for complex project
+- See [PORTABILITY.md](PORTABILITY.md) for current migration effort (~1.5-2 days)
+
+**Future-proofing:**
+- As the project grows beyond 512KB binary size, Teensy 4.1 (8MB flash) provides headroom
+- But architecture stays portable for when we need debugging or cost optimization
+
 ## Hardware Setup
 
 ```
-[MIDI Sequencer] --MIDI--> [Teensy 4.1 / OctaglideRS] --MIDI--> [Synthesizer]
+[MIDI Sequencer] --MIDI(DIN)--> [Teensy 4.1 / OctaglideRS] --MIDI(USB)--> [Synthesizer]
     (Octatrack)              (protoboard)
 ```
 
-- **Platform**: Teensy 4.1 (ARM Cortex-M7)
+- **Platform**: Teensy 4.1 (ARM Cortex-M7 @ 600 MHz, 8MB flash)
 - **MIDI**: LPUART6 @ 31250 baud (standard MIDI) + USB Host MIDI
-- **USB Host**: Using built-in USB Host pins with breakout to USB-A connector
+- **USB Host**: Built-in USB Host pins with breakout to USB-A connector
 - **Debug**: USB logging via imxrt-log (USB device port)
 - **Current State**: Prototype on protoboard, all hardware subject to change
 
@@ -70,8 +125,8 @@ MIDI Output
    - States: Idle, Animating
    - Commands: Start(Modulator), Stop, Duration(ms)
 
-4. **Modulators** (`src/anim/modulators.rs`)
-   - Define animation behaviors (e.g., glide trajectory)
+4. **Modulators** (`src/anim/modulators/`)
+   - Define animation behaviors (glide, envelope, etc.)
    - Implement `Modulation` trait: `animate(progress, depth, offset)` and `reset()`
    - Generate MIDI messages at each animation tick
 
@@ -82,25 +137,18 @@ octaglide-rs/
 ├── src/
 │   ├── main.rs              # RTIC app, hardware init, task scheduling
 │   ├── midi.rs              # MidiBus: interrupt-driven UART MIDI I/O
-│   ├── midi_fmt.rs          # Display formatting helpers for MIDI messages
-│   ├── usb_callbacks.rs     # C++ callback implementations (rust_log_info, rust_micros)
+│   ├── usb_midi.rs          # USB Host MIDI bus implementation
+│   ├── midi_fmt.rs          # Display formatting helpers
+│   ├── usb_callbacks.rs     # C++ callbacks for teensy-usbhost
 │   ├── core/
-│   │   ├── mod.rs          # Core: main processing pipeline
-│   │   ├── transformers.rs # Synchronous MIDI transformers
-│   │   └── consumers/
-│   │       ├── mod.rs      # Consumer trait
-│   │       └── glider.rs   # Glide implementation
+│   │   ├── mod.rs           # Core processing pipeline
+│   │   ├── transformers.rs  # Synchronous transformers
+│   │   └── consumers/       # Async consumers (glider, passthrough, mod_trigger)
 │   └── anim/
-│       ├── mod.rs
-│       ├── animator.rs     # Animator
-│       └── modulators.rs   # Modulator trait + implementations (Glide)
+│       ├── animator.rs      # Animation engine
+│       └── modulators/      # Modulator implementations (glide, envelope)
 │
-└── teensy-usbhost/          # USB Host library wrapper (separate crate)
-    ├── src/
-    │   └── lib.rs          # Rust bindings to C++ USB host library
-    ├── sys/
-    │   └── shim.cpp        # C++ USB host integration
-    └── build.rs            # C++ compilation via cc crate
+└── teensy-usbhost/          # USB Host C++ wrapper (separate crate)
 ```
 
 ## Current Features
@@ -171,15 +219,17 @@ The project uses RTIC 2.x for task scheduling and resource management.
 
 | Task | Priority | Type | Purpose |
 |------|----------|------|---------|
-| `midi_handler` | 2 | ISR | UART interrupt handler (RX/TX) |
-| `log_over_usb` | 2 | ISR | USB logging |
-| `usb_host_isr` | 2 | ISR | USB host controller interrupt |
+| `midi_handler` | 2 | ISR | UART MIDI interrupt (RX/TX) |
+| `otg_interrupt` | 2 | ISR | USB logging interrupt |
+| `usb_host_isr` | 2 | ISR | USB Host controller interrupt |
+| `reset_button_isr` | 2 | ISR | Hardware reset button |
 | `midi_dispatch` | 2 | async | Send MIDI messages from queue |
-| `animate` | 2 | async | Animator tick loop |
-| `usb_host_init` | 1 | async | USB host initialization (delayed) |
-| `usb_host_test` | 2 | async | USB MIDI device polling and testing |
-| `process_input` | 1 | async | Core MIDI processing pipeline |
-| `blink_led` | 1 | async | LED feedback (debugging) |
+| `core_task` | 1 | async | Core MIDI processing pipeline |
+| `animate_glide` | 2 | async | Glide animator tick loop |
+| `animate_envelope` | 2 | async | Envelope animator tick loop |
+| `usb_host_init` | 1 | async | USB Host initialization |
+| `usb_host_maintenance` | 1 | async | USB enumeration loop |
+| `blink_led` | 1 | async | LED feedback |
 
 ### Shared Resources
 - `MidiBus`: Shared between interrupt handlers and async tasks (via `lock()`)
@@ -266,9 +316,8 @@ This is a known pattern with Teensy + Rust + cargo-objcopy, working around imped
 
 ### Testing Setup
 - MIDI Controller: Octatrack (or any MIDI controller)
-- Device: Teensy 4.0 on protoboard
+- Device: Teensy 4.1 on protoboard
 - Synth: Any MIDI-compatible synthesizer
-- All components subject to change
 
 ### Debugging
 - USB logging available via `log::info!()`, `log::error!()`, etc.
@@ -290,41 +339,29 @@ This is a known pattern with Teensy + Rust + cargo-objcopy, working around imped
 - Document recovery behavior for each error case
 - Test error scenarios thoroughly
 
-## Architecture Extension Ideas
+## Architecture Notes
 
-Current architecture is solid but open to suggestions. Potential considerations:
+The current **Transformer → Consumer** architecture is solid:
+- **Transformers**: Synchronous, serial, order-dependent (e.g., octave shift before glide)
+- **Consumers**: Async, can spawn animations, generate timed sequences
 
-1. **Transformer/Consumer separation**: Works well. Keep it.
-   - Transformers = synchronous, chainable, order-dependent
-   - Consumers = async, parallel, can spawn animations
-
-2. **Possible additions**:
-   - **Filters**: Pre-transformer stage for routing/filtering by channel, type, etc.
-   - **Post-processors**: After consumers, before output (e.g., velocity humanization)
-   - **Presets**: Save/load transformer + consumer configurations
-
-3. **Configuration system**:
-   - Store in EEPROM/Flash (Teensy supports this)
-   - MIDI SysEx for remote configuration
-   - UI integration (when implemented)
+Future extensions (tracked in Backlog.md): filters, post-processors, presets, configuration system.
 
 ## When Helping with This Project
 
 ### DO:
-- Follow the `no_std` embedded patterns
-- Use `heapless` collections where possible
-- Avoid heap allocations wherever possible. Remember the heap limit is 1KB.
+- **Maintain portability** - Follow the principles in "Core Design Principles" section
+- Use `heapless` collections, avoid heap allocations (1KB limit)
 - Respect RTIC task priorities and shared resource locking
-- Log extensively for debugging (USB logging is available)
-- Consider real-time constraints (MIDI timing is critical)
-- Consult Backlog.md for current tasks and project planning
+- Log extensively (USB logging available)
+- Consider real-time constraints (MIDI timing critical, ~3ms jitter noticeable)
+- Consult Backlog.md for tasks and planning
 
 ### DON'T:
-- Use `std` library features
+- Mix platform-specific code into core modules (`src/core/`, `src/anim/`)
+- Use `std` library features (embedded `no_std` environment)
 - Perform blocking operations in high-priority tasks
-- Allocate large amounts of memory
-- Ignore MIDI timing requirements (~3ms jitter is noticeable)
-- Assume any specific synth features (pitchbend range, CC mappings, etc.) without configuration
+- Assume synth-specific features without configuration
 
 ### Common Pitfalls:
 - **Forgetting `unsafe` blocks**: Static mutable refs need `#[allow(static_mut_refs)]`
@@ -346,9 +383,10 @@ Current architecture is solid but open to suggestions. Potential considerations:
 4. If it needs animation, send `Output::Animate(Cmd)` messages
 
 ### Adding a new Modulator:
-1. Add variant to `Modulator` enum in `src/anim/modulators.rs`
+1. Create new file in `src/anim/modulators/` (e.g., `my_modulator.rs`)
 2. Implement struct + `Modulation` trait
-3. Use from Consumer via `Output::Animate(Cmd::Start(Modulator::YourModulator(...)))`
+3. Add variant to `Modulator` enum in `src/anim/modulators/mod.rs`
+4. Use from Consumer via `Cmd::Start(Modulator::YourModulator(...))`
 
 ### Modifying MIDI I/O:
 - `src/midi.rs` - be very careful, timing-critical code
@@ -378,6 +416,7 @@ Current architecture is solid but open to suggestions. Potential considerations:
 3. **MIDI features**: Which MIDI messages should be supported? (Currently: Note, CC, PitchBend)
 4. **Configuration**: How should users configure the device? (MIDI? UI? Compile-time?)
 5. **Synth compatibility**: Any specific synths to test against?
+6. **Platform choice**: Should we consider migrating to a more debugger-friendly platform (STM32)? See [PORTABILITY.md](PORTABILITY.md) for migration effort analysis (~1.5-2 days).
 
 ## Git flow
 
