@@ -8,26 +8,14 @@ use midi_msg::MidiMsg;
 use crate::core::{consumers::ModTrigger, transformers::Transformers};
 use crate::midi_fmt::MidiFmt;
 
-/// MIDI message with metadata about its origin and context
 #[derive(Debug, Clone)]
 pub struct MidiEvent {
     pub msg: MidiMsg,
-    pub synthetic: bool,
 }
 
 impl MidiEvent {
     pub fn from_user(msg: MidiMsg) -> Self {
-        Self {
-            msg,
-            synthetic: false,
-        }
-    }
-
-    pub fn synthetic(msg: MidiMsg) -> Self {
-        Self {
-            msg,
-            synthetic: true,
-        }
+        Self { msg }
     }
 }
 
@@ -80,13 +68,10 @@ impl Core {
     pub async fn process(&mut self, input: Input) {
         match input {
             Input::Process(mut event) => {
-                // Apply transformers only to user MIDI
-                if !event.synthetic {
-                    for transformer in &mut self.transformers {
-                        let processed = transformer.process(event.msg);
-                        let Some(m) = processed else { return };
-                        event.msg = m;
-                    }
+                for transformer in &mut self.transformers {
+                    let processed = transformer.process(event.msg);
+                    let Some(m) = processed else { return };
+                    event.msg = m;
                 }
 
                 log_event(&event);
@@ -112,7 +97,6 @@ fn log_event(event: &MidiEvent) {
             ..
         }
     ) {
-        let synthetic = if event.synthetic { " [synthetic]" } else { "" };
-        info!("<<< {}{}", MidiFmt(&event.msg), synthetic);
+        info!("<<< {}", MidiFmt(&event.msg));
     }
 }

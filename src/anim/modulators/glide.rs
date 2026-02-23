@@ -8,31 +8,22 @@ const PITCHBEND_MAX: u16 = PITCHBEND_CENTER as u16 * 2;
 const DEFAULT_VELOCITY: u8 = 100;
 
 const SYNTH_BEND_RANGE_SEMITONES: f32 = 2.0;
-const MAX_IGNORED_NOTES: usize = 8;
 
-/// Glide modulator for smooth pitch transitions between notes.
-///
-/// # Contract
-/// - Glide sends all NoteOn/NoteOff messages it needs, including for the destination note.
-/// - Glide checks ignored_notes before sending NoteOff to avoid releasing user-held notes.
-/// - The animation is free to send whatever MIDI messages it needs for smooth transitions.
 #[derive(Debug)]
 pub struct Glide {
     ch: Channel,
     from: u8,
     to: u8,
     active_note: u8,
-    ignored_notes: Vec<u8, MAX_IGNORED_NOTES>,
 }
 
 impl Glide {
-    pub fn new(ch: Channel, from: u8, to: u8, ignored_notes: Vec<u8, MAX_IGNORED_NOTES>) -> Self {
+    pub fn new(ch: Channel, from: u8, to: u8) -> Self {
         Self {
             ch,
             from,
             to,
             active_note: from,
-            ignored_notes,
         }
     }
 
@@ -94,7 +85,7 @@ impl Modulation for Glide {
             });
 
             // Send NoteOff for the previous note only if it's not user-held
-            if self.active_note != 0 && !self.ignored_notes.contains(&self.active_note) {
+            if self.active_note != 0 && !crate::held_notes::is_held(self.active_note) {
                 let _ = messages.push(MidiMsg::ChannelVoice {
                     channel: self.ch,
                     msg: ChannelVoiceMsg::NoteOff {
@@ -116,7 +107,7 @@ impl Modulation for Glide {
         let mut messages = Vec::<MidiMsg, 3>::new();
 
         // Send NoteOff for the currently active note only if it's not user-held
-        if self.active_note != 0 && !self.ignored_notes.contains(&self.active_note) {
+        if self.active_note != 0 && !crate::held_notes::is_held(self.active_note) {
             let _ = messages.push(MidiMsg::ChannelVoice {
                 channel: self.ch,
                 msg: ChannelVoiceMsg::NoteOff {

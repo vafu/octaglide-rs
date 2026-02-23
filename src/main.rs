@@ -25,6 +25,7 @@ fn panic(info: &PanicInfo) -> ! {
 
 mod anim;
 mod core;
+mod held_notes;
 mod midi;
 mod midi_fmt;
 mod usb_callbacks;
@@ -37,7 +38,7 @@ mod app {
 
     use crate::{
         anim::animator::{AnimationEngine, Cmd},
-        core::{Core, Input as CoreIn, MidiEvent},
+        core::{Core, Input as CoreIn},
         midi::{Bus, MidiBus, UartMidiBus},
         midi_fmt::MidiFmt,
         usb_midi::UsbMidiBus,
@@ -76,22 +77,19 @@ mod app {
     pub type CoreReceiver = Receiver<'static, CoreIn, CORE_INPUT_CHANNEL_CAPACITY>;
 
     macro_rules! make_animator {
-        ($task_name:ident, $core_sender:expr) => {{
+        ($task_name:ident, $midi_sender:expr) => {{
             let (animator, cmd_rx) = make_channel!(Cmd, 1);
             let engine = AnimationEngine::new(cmd_rx);
-            $task_name::spawn(engine, $core_sender.clone()).unwrap();
+            $task_name::spawn(engine, $midi_sender.clone()).unwrap();
             animator
         }};
     }
 
-    async fn run_animator_loop(mut engine: AnimationEngine, mut sender: CoreSender) -> ! {
+    async fn run_animator_loop(mut engine: AnimationEngine, mut sender: MidiSender) -> ! {
         loop {
             if let Some(msgs) = engine.tick().await {
                 for msg in msgs {
-                    sender
-                        .send(CoreIn::Process(MidiEvent::synthetic(msg)))
-                        .await
-                        .ok();
+                    sender.send(msg).await.ok();
                 }
             }
         }
@@ -169,8 +167,8 @@ mod app {
         let (midi_sender, midi_receiver) = make_channel!(MidiMsg, MIDI_CHANNEL_CAPACITY);
         let (core_sender, core_receiver) = make_channel!(CoreIn, CORE_INPUT_CHANNEL_CAPACITY);
 
-        let glide_animator = make_animator!(animate_glide, core_sender);
-        let envelope_animator = make_animator!(animate_envelope, core_sender);
+        let glide_animator = make_animator!(animate_glide, midi_sender);
+        let envelope_animator = make_animator!(animate_envelope, midi_sender);
 
         // Configure reset button (P14) with pulldown for interrupt on rising edge (button press to 3.3V)
         // Wire momentary button from P14 to 3.3V
@@ -324,7 +322,7 @@ mod app {
     async fn animate_envelope(
         _cx: animate_envelope::Context,
         engine: AnimationEngine,
-        sender: CoreSender,
+        sender: MidiSender,
     ) -> ! {
         run_animator_loop(engine, sender).await
     }
@@ -333,7 +331,7 @@ mod app {
     async fn animate_glide(
         _cx: animate_glide::Context,
         engine: AnimationEngine,
-        sender: CoreSender,
+        sender: MidiSender,
     ) -> ! {
         run_animator_loop(engine, sender).await
     }

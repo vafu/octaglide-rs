@@ -1,5 +1,4 @@
 use crate::midi::MidiBus;
-use log::info;
 use midi_msg::MidiMsg;
 use teensy_usbhost as usbhost;
 

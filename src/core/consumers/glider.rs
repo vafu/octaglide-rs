@@ -13,6 +13,7 @@ use crate::{
     },
     app::{Animator, MidiSender},
     core::MidiEvent,
+    held_notes,
 };
 
 const MAX_HELD_NOTES: usize = 8;
@@ -39,20 +40,14 @@ impl Glider {
         }
         let from_note = self.held_notes.last().cloned();
         self.held_notes.push(note).unwrap();
+        held_notes::press(note);
 
         if let Some(from) = from_note {
-            // Start glide animation - pass held_notes by value (stack copy)
             self.animator
-                .send(Cmd::Start(Modulator::Glide(Glide::new(
-                    channel,
-                    from,
-                    note,
-                    self.held_notes.clone(),
-                ))))
+                .send(Cmd::Start(Modulator::Glide(Glide::new(channel, from, note))))
                 .await
                 .unwrap();
         } else {
-            // No previous note - send NoteOn for the first note
             self.midi_sender
                 .send(MidiMsg::ChannelVoice {
                     channel,
@@ -70,24 +65,22 @@ impl Glider {
 
         let was_active = pos == self.held_notes.len() - 1;
         let released_note = self.held_notes.remove(pos);
+        held_notes::release(released_note);
 
         if let Some(&last_held) = self.held_notes.last()
             && was_active
         {
-            // If we released the active note, slide back to the previous held note
             self.animator
                 .send(Cmd::Start(Modulator::Glide(Glide::new(
                     channel,
                     released_note,
                     last_held,
-                    self.held_notes.clone(),
                 ))))
                 .await
                 .unwrap();
             info!("sliding from {} back to {}", released_note, last_held);
         } else {
             info!("canceling anim");
-            // No more held notes - send the final NoteOff and stop animation
             self.midi_sender.send(midi_msg).await.unwrap();
             self.animator.send(Cmd::Stop).await.unwrap();
         }
@@ -100,13 +93,6 @@ impl super::Consumer for Glider {
             return Some(event);
         };
 
-        // Synthetic messages: pass through directly (filtering happens in modulator)
-        if event.synthetic {
-            self.midi_sender.send(event.msg).await.unwrap();
-            return None;
-        }
-
-        // User messages: process normally
         match msg {
             NoteOn { note, velocity } => {
                 self.handle_note_on(channel, note, velocity).await;
@@ -118,7 +104,6 @@ impl super::Consumer for Glider {
                 None
             }
 
-            // Ignore other messages (CC, PitchBend, etc.) - let passthrough handle them
             _ => Some(event),
         }
     }

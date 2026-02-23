@@ -21,10 +21,6 @@ impl ModTrigger {
 
 impl super::Consumer for ModTrigger {
     async fn consume(&mut self, event: crate::core::MidiEvent) -> Option<crate::core::MidiEvent> {
-        if event.synthetic {
-            return Some(event);
-        }
-
         let MidiMsg::ChannelVoice { channel, msg } = event.msg else {
             return Some(event);
         };
