@@ -1,9 +1,11 @@
-use midi_msg::MidiMsg;
+use core::sync::atomic::Ordering::Relaxed;
+
+use midi_msg::{ChannelVoiceMsg, ControlChange, MidiMsg};
 
 use crate::{
     anim::{
         animator::Cmd,
-        modulators::{Envelope, Modulator},
+        modulators::{Envelope, Modulator, envelope::CONFIG},
     },
     app::Animator,
 };
@@ -26,7 +28,7 @@ impl super::Consumer for ModTrigger {
         };
 
         match msg {
-            midi_msg::ChannelVoiceMsg::NoteOn { .. } => {
+            ChannelVoiceMsg::NoteOn { .. } => {
                 self.animator
                     .send(Cmd::Start(Modulator::Envelope(Envelope::new(channel, 2))))
                     .await
@@ -34,7 +36,18 @@ impl super::Consumer for ModTrigger {
 
                 Some(event)
             }
-
+            ChannelVoiceMsg::ControlChange {
+                control: ControlChange::CC { control, value },
+            } => {
+                match control {
+                    1 => CONFIG.attack.store(value, Relaxed),
+                    2 => CONFIG.decay.store(value, Relaxed),
+                    3 => CONFIG.sustain.store(value, Relaxed),
+                    4 => CONFIG.release.store(value, Relaxed),
+                    _ => return Some(event),
+                }
+                None
+            }
             _ => Some(event),
         }
     }

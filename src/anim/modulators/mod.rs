@@ -20,7 +20,7 @@ pub enum Modulator {
     Envelope,
 }
 
-mod envelope;
+pub mod envelope;
 mod glide;
 
 pub use envelope::Envelope;

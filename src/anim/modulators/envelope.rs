@@ -1,7 +1,23 @@
+use core::sync::atomic::AtomicU8;
+
 use heapless::Vec;
 use midi_msg::{Channel, ChannelVoiceMsg, ControlChange, MidiMsg};
 
 use crate::anim::modulators::Modulation;
+
+pub struct EnvelopeConfig {
+    pub attack:  AtomicU8,
+    pub decay:   AtomicU8,
+    pub sustain: AtomicU8,
+    pub release: AtomicU8,
+}
+
+pub static CONFIG: EnvelopeConfig = EnvelopeConfig {
+    attack:  AtomicU8::new(20),
+    decay:   AtomicU8::new(20),
+    sustain: AtomicU8::new(80),
+    release: AtomicU8::new(20),
+};
 
 #[derive(Debug)]
 pub struct Envelope {
