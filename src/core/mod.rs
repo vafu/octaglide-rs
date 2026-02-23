@@ -19,6 +19,12 @@ impl MidiEvent {
     }
 }
 
+#[derive(Debug)]
+pub struct MidiOut {
+    pub msg: MidiMsg,
+    pub tag: &'static str,
+}
+
 use crate::{
     app::{Animator, MidiSender},
     core::{

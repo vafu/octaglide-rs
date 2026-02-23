@@ -12,7 +12,7 @@ use crate::{
         modulators::{Glide, Modulator},
     },
     app::{Animator, MidiSender},
-    core::MidiEvent,
+    core::{MidiEvent, MidiOut},
     held_notes,
 };
 
@@ -44,14 +44,19 @@ impl Glider {
 
         if let Some(from) = from_note {
             self.animator
-                .send(Cmd::Start(Modulator::Glide(Glide::new(channel, from, note))))
+                .send(Cmd::Start(Modulator::Glide(Glide::new(
+                    channel, from, note,
+                ))))
                 .await
                 .unwrap();
         } else {
             self.midi_sender
-                .send(MidiMsg::ChannelVoice {
-                    channel,
-                    msg: ChannelVoiceMsg::NoteOn { note, velocity },
+                .send(MidiOut {
+                    msg: MidiMsg::ChannelVoice {
+                        channel,
+                        msg: ChannelVoiceMsg::NoteOn { note, velocity },
+                    },
+                    tag: "glider",
                 })
                 .await
                 .unwrap();
@@ -81,7 +86,13 @@ impl Glider {
             info!("sliding from {} back to {}", released_note, last_held);
         } else {
             info!("canceling anim");
-            self.midi_sender.send(midi_msg).await.unwrap();
+            self.midi_sender
+                .send(MidiOut {
+                    msg: midi_msg,
+                    tag: "glider",
+                })
+                .await
+                .unwrap();
             self.animator.send(Cmd::Stop).await.unwrap();
         }
     }

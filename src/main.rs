@@ -38,7 +38,7 @@ mod app {
 
     use crate::{
         anim::animator::{AnimationEngine, Cmd},
-        core::{Core, Input as CoreIn},
+        core::{Core, Input as CoreIn, MidiOut},
         midi::{Bus, MidiBus, UartMidiBus},
         midi_fmt::MidiFmt,
         usb_midi::UsbMidiBus,
@@ -70,8 +70,8 @@ mod app {
     };
 
     pub type MidiUart = Lpuart<Pins<pins::P1, pins::P0>, 6>;
-    pub type MidiSender = Sender<'static, MidiMsg, MIDI_CHANNEL_CAPACITY>;
-    pub type MidiReceiver = Receiver<'static, MidiMsg, MIDI_CHANNEL_CAPACITY>;
+    pub type MidiSender = Sender<'static, MidiOut, MIDI_CHANNEL_CAPACITY>;
+    pub type MidiReceiver = Receiver<'static, MidiOut, MIDI_CHANNEL_CAPACITY>;
     pub type Animator = Sender<'static, Cmd, 1>;
     pub type CoreSender = Sender<'static, CoreIn, CORE_INPUT_CHANNEL_CAPACITY>;
     pub type CoreReceiver = Receiver<'static, CoreIn, CORE_INPUT_CHANNEL_CAPACITY>;
@@ -85,11 +85,15 @@ mod app {
         }};
     }
 
-    async fn run_animator_loop(mut engine: AnimationEngine, mut sender: MidiSender) -> ! {
+    async fn run_animator_loop(
+        mut engine: AnimationEngine,
+        mut sender: MidiSender,
+        tag: &'static str,
+    ) -> ! {
         loop {
             if let Some(msgs) = engine.tick().await {
                 for msg in msgs {
-                    sender.send(msg).await.ok();
+                    sender.send(MidiOut { msg, tag }).await.ok();
                 }
             }
         }
@@ -164,7 +168,7 @@ mod app {
             POLLER = Some(poller);
         });
 
-        let (midi_sender, midi_receiver) = make_channel!(MidiMsg, MIDI_CHANNEL_CAPACITY);
+        let (midi_sender, midi_receiver) = make_channel!(MidiOut, MIDI_CHANNEL_CAPACITY);
         let (core_sender, core_receiver) = make_channel!(CoreIn, CORE_INPUT_CHANNEL_CAPACITY);
 
         let glide_animator = make_animator!(animate_glide, midi_sender);
@@ -219,7 +223,7 @@ mod app {
     #[task(shared = [tx_bus], priority = 2)]
     async fn midi_dispatch(mut cx: midi_dispatch::Context, mut r: MidiReceiver) -> ! {
         loop {
-            let msg = r.recv().await.unwrap();
+            let MidiOut { msg, tag } = r.recv().await.unwrap();
             cx.shared.tx_bus.lock(|bus| {
                 if !matches!(
                     msg,
@@ -228,7 +232,7 @@ mod app {
                         ..
                     }
                 ) {
-                    info!(">>> {}", MidiFmt(&msg));
+                    info!(">>> [{}] {}", tag, MidiFmt(&msg));
                 }
                 bus.send(&msg);
             });
@@ -324,7 +328,7 @@ mod app {
         engine: AnimationEngine,
         sender: MidiSender,
     ) -> ! {
-        run_animator_loop(engine, sender).await
+        run_animator_loop(engine, sender, "env").await
     }
 
     #[task(priority = 2)]
@@ -333,6 +337,6 @@ mod app {
         engine: AnimationEngine,
         sender: MidiSender,
     ) -> ! {
-        run_animator_loop(engine, sender).await
+        run_animator_loop(engine, sender, "glide").await
     }
 }
