@@ -5,7 +5,7 @@ use midi_msg::{ChannelVoiceMsg, ControlChange, MidiMsg};
 use crate::{
     anim::{
         animator::Cmd,
-        modulators::{Envelope, Modulator, envelope::CONFIG},
+        modulators::{Envelope, Modulator, envelope::CONFIGS},
     },
     app::Animator,
 };
@@ -29,21 +29,15 @@ impl super::Consumer for ModTrigger {
 
         match msg {
             ChannelVoiceMsg::NoteOn { .. } => {
-                self.animator
-                    .send(Cmd::Start(Modulator::Envelope(Envelope::new(channel, 2))))
-                    .await
-                    .unwrap();
-
+                self.animator.send(Cmd::Start(Modulator::Envelope(Envelope::new(channel, 2, &CONFIGS[0])))).await.unwrap();
                 Some(event)
             }
             ChannelVoiceMsg::ControlChange {
                 control: ControlChange::CC { control, value },
             } => {
                 match control {
-                    1 => CONFIG.attack.store(value, Relaxed),
-                    2 => CONFIG.decay.store(value, Relaxed),
-                    3 => CONFIG.sustain.store(value, Relaxed),
-                    4 => CONFIG.release.store(value, Relaxed),
+                    1 => CONFIGS[0].attack.store(value, Relaxed),
+                    2 => CONFIGS[0].release.store(value, Relaxed),
                     _ => return Some(event),
                 }
                 None

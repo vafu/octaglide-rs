@@ -13,8 +13,6 @@ use super::modulators::Modulation;
 #[derive(Debug)]
 pub enum Cmd {
     Start(Modulator),
-    Duration(u32),
-    // Looping(bool),
     Stop,
 }
 
@@ -22,9 +20,7 @@ pub enum Cmd {
 pub struct AnimationEngine {
     rx: Receiver<'static, Cmd, 1>,
     looping: bool,
-    duration: u32,
     state: State,
-    // TODO: implement depth control (see roadmap) - will control animation intensity
     _depth: f32,
     modulator: Option<Modulator>,
 }
@@ -45,46 +41,54 @@ impl AnimationEngine {
         AnimationEngine {
             rx,
             looping: false,
-            duration: 100,
             state: State::Idle,
-            _depth: 1.0, // Default depth (full intensity)
+            _depth: 1.0,
             modulator: None,
         }
     }
 
     pub async fn tick(&mut self) -> Messages {
-        if self.duration == 0 {
-            return self.recv_cmd().await;
-        }
         match self.state {
             State::Idle => self.recv_cmd().await,
 
             State::Animating {
                 last_updated,
                 progress_at: progress,
-            } => futures::select_biased! {
-                new_msg = self.recv_cmd().fuse() => new_msg,
-                _ = Systick::delay(MSG_INTERVAL_MS.millis()).fuse() => {
-                    let now = Systick::now();
-                    let elapsed = now - last_updated;
-                    let progress_delta = elapsed.to_millis() as f32 / self.duration as f32;
-                    let new_progress = (progress + progress_delta).clamp(0.0, 1.0);
-                    if new_progress >= 1.0 {
-                        self.state = if self.looping {
-                            State::Animating { last_updated: now, progress_at: 0.0 }
-                        } else {
-                            info!("anim end");
-                            State::Idle
-                        };
-                    } else {
-                        self.state = State::Animating {
-                            last_updated: now,
-                            progress_at: new_progress,
-                        }
-                    }
-                    self.modulator.as_mut()?.animate(new_progress, 1.0, 1.0)
+            } => {
+                let duration = self
+                    .modulator
+                    .as_ref()
+                    .map(|m| m.duration_ms())
+                    .unwrap_or(0);
+                if duration == 0 {
+                    return self.recv_cmd().await;
                 }
-            },
+
+                futures::select_biased! {
+                    new_msg = self.recv_cmd().fuse() => new_msg,
+                    _ = Systick::delay(MSG_INTERVAL_MS.millis()).fuse() => {
+                        let now = Systick::now();
+                        let elapsed = now - last_updated;
+                        let progress_delta = if duration == 0 { 1.0 } else { elapsed.to_millis() as f32 / duration as f32 };
+                        let new_progress = (progress + progress_delta).clamp(0.0, 1.0);
+                        let res = self.modulator.as_mut()?.animate(new_progress, 1.0, 1.0);
+                        if new_progress >= 1.0 {
+                            self.state = if self.modulator.as_mut()?.next_stage() || self.looping {
+                                State::Animating { last_updated: now, progress_at: 0.0 }
+                            } else {
+                                info!("anim end");
+                                State::Idle
+                            };
+                        } else {
+                            self.state = State::Animating {
+                                last_updated: now,
+                                progress_at: new_progress,
+                            }
+                        }
+                        res
+                    }
+                }
+            }
         }
     }
 
@@ -95,7 +99,6 @@ impl AnimationEngine {
         };
         match cmd {
             Cmd::Start(modulator) => {
-                // Reset the old modulator before replacing it
                 let mut messages = if let Some(old_mod) = self.modulator.as_mut() {
                     old_mod.reset().unwrap_or(heapless::Vec::new())
                 } else {
@@ -108,7 +111,6 @@ impl AnimationEngine {
                 };
                 self.modulator = Some(modulator);
 
-                // Append initial animation messages to reset messages
                 if let Some(new_msgs) = self.modulator.as_mut()?.animate(0.0, 0.0, 0.0) {
                     for msg in new_msgs {
                         let _ = messages.push(msg);
@@ -124,31 +126,6 @@ impl AnimationEngine {
                 }
                 State::Idle => self.modulator.as_mut()?.reset(),
             },
-            Cmd::Duration(dur) => {
-                self.duration = dur;
-                if self.duration != 0 {
-                    return None;
-                }
-                let State::Animating { .. } = self.state else {
-                    return None;
-                };
-
-                self.modulator.as_mut()?.reset()
-            } // EngineMessage::Looping(looping) => {
-              //
-              //     self.looping = looping;
-              //     if looping && matches!(self.state, State::Idle) {
-              //         self.state = State::Animating {
-              //             last_updated: Systick::now(),
-              //             progress: 0.0,
-              //         };
-              //         Some(self.function.reset())
-              //     } else {
-              //         None
-              //     }
-              // }
         }
     }
 }
-
-

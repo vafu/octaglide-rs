@@ -9,7 +9,7 @@ use midi_msg::{
 use crate::{
     anim::{
         animator::Cmd,
-        modulators::{Glide, Modulator},
+        modulators::{Glide, Modulator, glide},
     },
     app::{Animator, MidiSender},
     core::{MidiEvent, MidiOut},
@@ -45,7 +45,7 @@ impl Glider {
         if let Some(from) = from_note {
             self.animator
                 .send(Cmd::Start(Modulator::Glide(Glide::new(
-                    channel, from, note,
+                    channel, from, note, &glide::CONFIG,
                 ))))
                 .await
                 .unwrap();
@@ -80,6 +80,7 @@ impl Glider {
                     channel,
                     released_note,
                     last_held,
+                    &glide::CONFIG,
                 ))))
                 .await
                 .unwrap();

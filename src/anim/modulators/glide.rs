@@ -1,3 +1,5 @@
+use core::sync::atomic::{AtomicU32, Ordering::Relaxed};
+
 use heapless::Vec;
 use midi_msg::{Channel, ChannelVoiceMsg, MidiMsg};
 
@@ -10,20 +12,37 @@ const DEFAULT_VELOCITY: u8 = 100;
 const SYNTH_BEND_RANGE_SEMITONES: f32 = 2.0;
 
 #[derive(Debug)]
+pub struct GlideConfig {
+    pub duration_ms: AtomicU32,
+}
+
+impl GlideConfig {
+    const fn default() -> Self {
+        Self {
+            duration_ms: AtomicU32::new(200),
+        }
+    }
+}
+
+pub static CONFIG: GlideConfig = GlideConfig::default();
+
+#[derive(Debug)]
 pub struct Glide {
     ch: Channel,
     from: u8,
     to: u8,
     active_note: u8,
+    config: &'static GlideConfig,
 }
 
 impl Glide {
-    pub fn new(ch: Channel, from: u8, to: u8) -> Self {
+    pub fn new(ch: Channel, from: u8, to: u8, config: &'static GlideConfig) -> Self {
         Self {
             ch,
             from,
             to,
             active_note: from,
+            config,
         }
     }
 
@@ -41,6 +60,14 @@ impl Glide {
 }
 
 impl Modulation for Glide {
+    fn duration_ms(&self) -> u32 {
+        self.config.duration_ms.load(Relaxed)
+    }
+
+    fn next_stage(&mut self) -> bool {
+        false
+    }
+
     fn animate(&mut self, progress: f32, _depth: f32, _offset: f32) -> Messages {
         let mut messages = Vec::<MidiMsg, 3>::new();
 
