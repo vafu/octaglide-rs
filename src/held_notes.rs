@@ -18,3 +18,7 @@ pub fn release(note: u8) {
 pub fn is_held(note: u8) -> bool {
     HELD[note as usize / 32].load(Relaxed) & (1 << (note % 32)) != 0
 }
+
+pub fn any_held() -> bool {
+    HELD.iter().any(|w| w.load(Relaxed) != 0)
+}
