@@ -36,9 +36,19 @@ use crate::{
 };
 use heapless::Vec;
 
+/// What the encoder + sliders are currently controlling.
+#[derive(Debug, Clone, Copy)]
+enum EncoderMode {
+    /// Sliders 0-3 → A/D/S/R durations.
+    Time,
+    /// Sliders 0,1,3 → A/D/R curve shapes; slider 2 still controls sustain level.
+    Curve,
+}
+
 pub struct Core {
     transformers: Vec<Transformers, 8>,
     consumers: Vec<Consumers, 8>,
+    encoder_mode: EncoderMode,
 }
 
 #[derive(Debug)]
@@ -76,6 +86,7 @@ impl Core {
         Core {
             transformers,
             consumers,
+            encoder_mode: EncoderMode::Time,
         }
     }
 
@@ -101,12 +112,21 @@ impl Core {
                 // Map 10-bit ADC (0-1023) to 0-127
                 let param = (value >> 3) as u8;
                 let config = &CONFIGS[0];
-                match index {
-                    3 => config.attack.store(param, Relaxed),
-                    2 => config.decay.store(param, Relaxed),
-                    1 => config.sustain.store(param, Relaxed),
-                    0 => config.release.store(param, Relaxed),
-                    _ => {}
+                match self.encoder_mode {
+                    EncoderMode::Time => match index {
+                        0 => config.attack.store(param, Relaxed),
+                        1 => config.decay.store(param, Relaxed),
+                        2 => config.sustain.store(param, Relaxed),
+                        3 => config.release.store(param, Relaxed),
+                        _ => {}
+                    },
+                    EncoderMode::Curve => match index {
+                        0 => config.curve_attack.store(param, Relaxed),
+                        1 => config.curve_decay.store(param, Relaxed),
+                        2 => config.sustain.store(param, Relaxed), // sustain level, no curve concept
+                        3 => config.curve_release.store(param, Relaxed),
+                        _ => {}
+                    },
                 }
             }
             Input::EncoderStep(delta) => {
@@ -118,7 +138,11 @@ impl Core {
                 info!("Envelope mode → {}", next);
             }
             Input::EncoderClick => {
-                // TODO: implement encoder click action
+                self.encoder_mode = match self.encoder_mode {
+                    EncoderMode::Time => EncoderMode::Curve,
+                    EncoderMode::Curve => EncoderMode::Time,
+                };
+                info!("Encoder mode → {:?}", self.encoder_mode);
             }
         }
     }

@@ -1,6 +1,7 @@
 use core::sync::atomic::{AtomicU8, Ordering::Relaxed};
 
 use heapless::Vec;
+use libm::powf;
 use midi_msg::{Channel, ChannelVoiceMsg, ControlChange, MidiMsg};
 
 use crate::{anim::modulators::Modulation, held_notes};
@@ -26,6 +27,12 @@ pub struct EnvelopeConfig {
     pub sustain: AtomicU8,
     /// Envelope mode: 0=AD, 1=AR, 2=ADSR  (see `mode` sub-module).
     pub mode: AtomicU8,
+    /// Curve shape for each timed stage: 0=logarithmic, 64=linear, 127=exponential.
+    /// Maps to exponent via 2^((val-64)/32): 0→0.25, 64→1.0, 127≈4.0.
+    /// Applied as `progress^exponent` before computing the stage output.
+    pub curve_attack: AtomicU8,
+    pub curve_decay: AtomicU8,
+    pub curve_release: AtomicU8,
 }
 
 impl EnvelopeConfig {
@@ -36,6 +43,9 @@ impl EnvelopeConfig {
             release: AtomicU8::new(20),
             sustain: AtomicU8::new(80),
             mode: AtomicU8::new(mode::AD),
+            curve_attack: AtomicU8::new(64),
+            curve_decay: AtomicU8::new(64),
+            curve_release: AtomicU8::new(64),
         }
     }
 }
@@ -86,6 +96,19 @@ impl Envelope {
         self.config.sustain.load(Relaxed) as f32 / 127.0
     }
 
+    /// Maps curve param (0-127) to a power exponent: 0→0.25 (log), 64→1.0 (linear), 127≈4.0 (exp).
+    fn curve_exp(&self) -> f32 {
+        let m = self.current_mode();
+        let s = self.stage;
+        let val = match (m, s) {
+            (_, 0)                            => self.config.curve_attack.load(Relaxed),
+            (mode::AD, 1) | (mode::ADSR, 1)  => self.config.curve_decay.load(Relaxed),
+            (mode::AR, 2) | (mode::ADSR, 3)  => self.config.curve_release.load(Relaxed),
+            _                                 => 64,
+        };
+        powf(2.0, (val as f32 - 64.0) / 32.0)
+    }
+
     fn make_cc(&self, value: u8) -> MidiMsg {
         MidiMsg::ChannelVoice {
             channel: self.ch,
@@ -134,18 +157,19 @@ impl Modulation for Envelope {
         let m = self.current_mode();
         let s = self.stage;
         let sus = self.sustain_mult();
+        let p = powf(progress, self.curve_exp()); // shaped progress
 
         let value: u8 = (match (m, s) {
             // Attack: 0 → 127
-            (_, 0) => progress,
+            (_, 0) => p,
             // AD Decay: 127 → 0
-            (mode::AD, 1) => 1.0 - progress,
+            (mode::AD, 1) => 1.0 - p,
             // AR Release: 127 → 0
-            (mode::AR, 2) => 1.0 - progress,
+            (mode::AR, 2) => 1.0 - p,
             // ADSR Decay: 127 → sustain_level
-            (mode::ADSR, 1) => 1.0 - progress * (1.0 - sus),
+            (mode::ADSR, 1) => 1.0 - p * (1.0 - sus),
             // ADSR Release: sustain_level → 0
-            (mode::ADSR, 3) => sus * (1.0 - progress),
+            (mode::ADSR, 3) => sus * (1.0 - p),
             _ => 0.0,
         } * 127.0) as u8;
 

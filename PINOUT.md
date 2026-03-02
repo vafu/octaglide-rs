@@ -9,9 +9,9 @@
 | P15 | ADC Slider 1    | ADC1 ch8     | -                      | Decay   (A1, 0-1023 → 0-127)       |
 | P16 | ADC Slider 2    | ADC1 ch12    | -                      | Sustain (A2, 0-1023 → 0-127)       |
 | P17 | ADC Slider 3    | ADC1 ch11    | -                      | Release (A3, 0-1023 → 0-127)       |
-| P18 | Encoder A       | GPIO1_IO17   | GPIO1_COMBINED_16_31   | Rising edge → read B for direction |
+| P18 | Encoder Click   | GPIO1_IO17   | GPIO1_COMBINED_16_31   | Falling edge                       |
 | P19 | Encoder B       | GPIO1_IO16   | -                      | Polled in encoder ISR, no interrupt|
-| P20 | Encoder Click   | GPIO1_IO26   | GPIO1_COMBINED_16_31   | Rising edge                        |
+| P20 | Encoder A       | GPIO1_IO26   | GPIO1_COMBINED_16_31   | Falling edge → read B for direction|
 | P33 | Reset Button    | GPIO4_IO07   | GPIO4_COMBINED_0_15    | Rising edge, resets MCU            |
 
 ## Wiring

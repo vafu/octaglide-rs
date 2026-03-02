@@ -197,8 +197,8 @@ mod app {
         // Enable GPIO interrupt on rising edge (button press)
         gpio4.set_interrupt(&reset_btn, Some(gpio::Trigger::RisingEdge));
 
-        // Configure rotary encoder on P18 (A), P19 (B), P20 (Click) — all GPIO1_COMBINED_16_31
-        // Wiring: encoder common → 3.3V, A/B/Click pins → pulldown to GND
+        // Configure rotary encoder on P20 (A), P19 (B), P18 (Click) — all GPIO1_COMBINED_16_31
+        // Wiring: EC11 common → GND, A/B/Click → internal 100kΩ pullup, falling edge
         // TODO(task-28): upgrade to full quadrature decoding for better reliability at high speed
         let enc_cfg = iomuxc::Config::zero().set_pull_keeper(Some(iomuxc::PullKeeper::Pullup100k));
         iomuxc::configure(&mut pins.p18, enc_cfg);
@@ -206,7 +206,7 @@ mod app {
         iomuxc::configure(&mut pins.p20, enc_cfg);
         let enc_a = gpio1.input(pins.p20);
         let enc_b = gpio1.input(pins.p19);
-        let enc_click = gpio1.input(pinshk.p18);
+        let enc_click = gpio1.input(pins.p18);
         gpio1.set_interrupt(&enc_a, Some(gpio::Trigger::FallingEdge));
         gpio1.set_interrupt(&enc_click, Some(gpio::Trigger::FallingEdge));
 
