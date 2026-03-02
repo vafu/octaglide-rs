@@ -8,44 +8,127 @@ use crate::{anim::modulators::Modulation, held_notes};
 
 const CC_TO_MS: u32 = 16;
 
-/// Envelope operating mode.
-/// Stored as u8 in `EnvelopeConfig::mode`.
-pub mod mode {
-    pub const AD: u8 = 0;   // Attack → Decay
-    pub const AR: u8 = 1;   // Attack → Hold → Release
-    pub const ADSR: u8 = 2; // Attack → Decay → Hold → Release
+// ── Level ─────────────────────────────────────────────────────────────────────
+
+/// A resolved output level for a ramp endpoint.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum Level {
+    Zero,
+    Full,
+    Sustain, // resolved at runtime from EnvelopeConfig::sustain
 }
 
+// ── StageKind ─────────────────────────────────────────────────────────────────
+
+/// What a stage does.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum StageKind {
+    /// Linear (or curved) ramp between two levels.
+    Ramp { from: Level, to: Level },
+    /// Hold at sustain level until all notes are released, then advance.
+    Hold,
+}
+
+// ── StageSel ──────────────────────────────────────────────────────────────────
+
+/// Which named Stage parameters from EnvelopeConfig apply to this stage.
+#[derive(Clone, Copy, Debug)]
+pub enum StageSel {
+    Attack,
+    Decay,
+    Release,
+    None, // Hold stages have no configurable duration/curve
+}
+
+// ── StageDesc ─────────────────────────────────────────────────────────────────
+
+/// Immutable description of one step in a mode's sequence.
+/// Defined once per mode; contains no mutable state.
+#[derive(Clone, Copy)]
+pub struct StageDesc {
+    pub kind: StageKind,
+    pub sel: StageSel,
+}
+
+// ── Stage ─────────────────────────────────────────────────────────────────────
+
+/// Mutable parameters for a named stage, shared across all modes that use it.
+#[derive(Debug)]
+pub struct Stage {
+    pub duration: AtomicU8,
+    pub curve: AtomicU8, // 0=logarithmic, 64=linear, 127=exponential
+}
+
+impl Stage {
+    pub const fn new(duration: u8) -> Self {
+        Self {
+            duration: AtomicU8::new(duration),
+            curve: AtomicU8::new(64), // linear default
+        }
+    }
+}
+
+// ── Mode ──────────────────────────────────────────────────────────────────────
+
+/// A mode is simply an ordered slice of stage descriptors.
+pub type Mode = &'static [StageDesc];
+
+pub mod mode {
+    use super::{Level, Mode, StageSel, StageDesc, StageKind};
+
+    pub const AD: u8 = 0;
+    pub const AR: u8 = 1;
+    pub const ADSR: u8 = 2;
+
+    const AD_SEQ: Mode = &[
+        StageDesc { kind: StageKind::Ramp { from: Level::Zero, to: Level::Full    }, sel: StageSel::Attack  },
+        StageDesc { kind: StageKind::Ramp { from: Level::Full, to: Level::Zero    }, sel: StageSel::Decay   },
+    ];
+
+    const AR_SEQ: Mode = &[
+        StageDesc { kind: StageKind::Ramp { from: Level::Zero, to: Level::Full    }, sel: StageSel::Attack  },
+        StageDesc { kind: StageKind::Hold,                                           sel: StageSel::None    },
+        StageDesc { kind: StageKind::Ramp { from: Level::Full, to: Level::Zero    }, sel: StageSel::Release },
+    ];
+
+    const ADSR_SEQ: Mode = &[
+        StageDesc { kind: StageKind::Ramp { from: Level::Zero,    to: Level::Full    }, sel: StageSel::Attack  },
+        StageDesc { kind: StageKind::Ramp { from: Level::Full,    to: Level::Sustain }, sel: StageSel::Decay   },
+        StageDesc { kind: StageKind::Hold,                                              sel: StageSel::None    },
+        StageDesc { kind: StageKind::Ramp { from: Level::Sustain, to: Level::Zero   }, sel: StageSel::Release },
+    ];
+
+    pub fn sequence(m: u8) -> Mode {
+        match m {
+            AD   => AD_SEQ,
+            AR   => AR_SEQ,
+            ADSR => ADSR_SEQ,
+            _    => AD_SEQ,
+        }
+    }
+}
+
+// ── EnvelopeConfig ────────────────────────────────────────────────────────────
+
+/// All mutable parameters for one envelope instance.
+/// Stored as a static so atomics have stable addresses.
 #[derive(Debug)]
 pub struct EnvelopeConfig {
-    pub attack: AtomicU8,
-    /// Decay duration (AD stage 1, ADSR stage 1).
-    pub decay: AtomicU8,
-    /// Release duration (AR stage 2, ADSR stage 3).
-    pub release: AtomicU8,
-    /// Sustain level 0-127 (ADSR hold value; AR hold is always 127).
-    pub sustain: AtomicU8,
-    /// Envelope mode: 0=AD, 1=AR, 2=ADSR  (see `mode` sub-module).
-    pub mode: AtomicU8,
-    /// Curve shape for each timed stage: 0=logarithmic, 64=linear, 127=exponential.
-    /// Maps to exponent via 2^((val-64)/32): 0→0.25, 64→1.0, 127≈4.0.
-    /// Applied as `progress^exponent` before computing the stage output.
-    pub curve_attack: AtomicU8,
-    pub curve_decay: AtomicU8,
-    pub curve_release: AtomicU8,
+    pub attack:  Stage,
+    pub decay:   Stage,
+    pub release: Stage,
+    pub sustain: AtomicU8, // hold level, 0-127
+    pub mode:    AtomicU8, // mode::AD / AR / ADSR
 }
 
 impl EnvelopeConfig {
     const fn default() -> Self {
         Self {
-            attack: AtomicU8::new(20),
-            decay: AtomicU8::new(20),
-            release: AtomicU8::new(20),
+            attack:  Stage::new(20),
+            decay:   Stage::new(20),
+            release: Stage::new(20),
             sustain: AtomicU8::new(80),
-            mode: AtomicU8::new(mode::AD),
-            curve_attack: AtomicU8::new(64),
-            curve_decay: AtomicU8::new(64),
-            curve_release: AtomicU8::new(64),
+            mode:    AtomicU8::new(mode::AD),
         }
     }
 }
@@ -57,56 +140,48 @@ pub static CONFIGS: [EnvelopeConfig; 4] = [
     EnvelopeConfig::default(),
 ];
 
+// ── Envelope ──────────────────────────────────────────────────────────────────
+
 #[derive(Debug)]
 pub struct Envelope {
-    ch: Channel,
-    cc: u8,
-    config: &'static EnvelopeConfig,
-    stage: u8,
+    ch:        Channel,
+    cc:        u8,
+    config:    &'static EnvelopeConfig,
+    stage_idx: usize,
 }
 
 impl Envelope {
     pub fn new(ch: Channel, cc: u8, config: &'static EnvelopeConfig) -> Self {
-        Self { ch, cc, config, stage: 0 }
+        Self { ch, cc, config, stage_idx: 0 }
     }
 
-    fn current_mode(&self) -> u8 {
-        self.config.mode.load(Relaxed)
+    fn sequence(&self) -> Mode {
+        mode::sequence(self.config.mode.load(Relaxed))
     }
 
-    fn total_stages(&self) -> u8 {
-        match self.current_mode() {
-            mode::AD => 2,
-            mode::AR => 3,
-            mode::ADSR => 4,
-            _ => 2,
+    fn current_desc(&self) -> &'static StageDesc {
+        &self.sequence()[self.stage_idx]
+    }
+
+    fn current_params(&self) -> Option<&Stage> {
+        match self.current_desc().sel {
+            StageSel::Attack  => Some(&self.config.attack),
+            StageSel::Decay   => Some(&self.config.decay),
+            StageSel::Release => Some(&self.config.release),
+            StageSel::None    => None,
         }
     }
 
-    /// True when the current stage is the hold/sustain stage.
-    fn is_hold_stage(&self) -> bool {
-        matches!(
-            (self.current_mode(), self.stage),
-            (mode::AR, 1) | (mode::ADSR, 2)
-        )
-    }
-
-    /// Sustain level as a 0.0-1.0 multiplier.
-    fn sustain_mult(&self) -> f32 {
+    fn sustain(&self) -> f32 {
         self.config.sustain.load(Relaxed) as f32 / 127.0
     }
 
-    /// Maps curve param (0-127) to a power exponent: 0→0.25 (log), 64→1.0 (linear), 127≈4.0 (exp).
-    fn curve_exp(&self) -> f32 {
-        let m = self.current_mode();
-        let s = self.stage;
-        let val = match (m, s) {
-            (_, 0)                            => self.config.curve_attack.load(Relaxed),
-            (mode::AD, 1) | (mode::ADSR, 1)  => self.config.curve_decay.load(Relaxed),
-            (mode::AR, 2) | (mode::ADSR, 3)  => self.config.curve_release.load(Relaxed),
-            _                                 => 64,
-        };
-        powf(2.0, (val as f32 - 64.0) / 32.0)
+    fn resolve(&self, level: Level) -> f32 {
+        match level {
+            Level::Zero    => 0.0,
+            Level::Full    => 1.0,
+            Level::Sustain => self.sustain(),
+        }
     }
 
     fn make_cc(&self, value: u8) -> MidiMsg {
@@ -121,67 +196,43 @@ impl Envelope {
 
 impl Modulation for Envelope {
     fn duration_ms(&self) -> u32 {
-        if self.is_hold_stage() {
-            // Hold for as long as any note is pressed; advance immediately when all released.
+        if self.current_desc().kind == StageKind::Hold {
             return if held_notes::any_held() { u32::MAX } else { 0 };
         }
-
-        let m = self.current_mode();
-        let s = self.stage;
-        let cc_val = match (m, s) {
-            (_, 0) => self.config.attack.load(Relaxed),          // Attack (all modes)
-            (mode::AD, 1) => self.config.decay.load(Relaxed),   // AD: Decay
-            (mode::AR, 2) => self.config.release.load(Relaxed), // AR: Release
-            (mode::ADSR, 1) => self.config.decay.load(Relaxed), // ADSR: Decay
-            (mode::ADSR, 3) => self.config.release.load(Relaxed), // ADSR: Release
-            _ => 0,
-        };
-        (cc_val as u32) * CC_TO_MS
+        self.current_params()
+            .map(|s| s.duration.load(Relaxed) as u32 * CC_TO_MS)
+            .unwrap_or(0)
     }
 
     fn next_stage(&mut self) -> bool {
-        self.stage += 1;
-        let done = self.stage >= self.total_stages();
+        self.stage_idx += 1;
+        let done = self.stage_idx >= self.sequence().len();
         if done {
-            self.stage = 0;
+            self.stage_idx = 0;
         }
         !done
     }
 
     fn animate(&mut self, progress: f32, _depth: f32, _offset: f32) -> super::Messages {
-        // Hold stage: stay silent; the last Attack/Decay tick already set the right CC level.
-        if self.is_hold_stage() {
-            return None;
-        }
+        let StageKind::Ramp { from, to } = self.current_desc().kind else {
+            return None; // Hold stage: stay silent
+        };
 
-        let m = self.current_mode();
-        let s = self.stage;
-        let sus = self.sustain_mult();
-        let p = powf(progress, self.curve_exp()); // shaped progress
+        let params = self.current_params().expect("Ramp stage must have params");
+        let curve_exp = powf(2.0, (params.curve.load(Relaxed) as f32 - 64.0) / 32.0);
+        let p = powf(progress, curve_exp);
 
-        let value: u8 = (match (m, s) {
-            // Attack: 0 → 127
-            (_, 0) => p,
-            // AD Decay: 127 → 0
-            (mode::AD, 1) => 1.0 - p,
-            // AR Release: 127 → 0
-            (mode::AR, 2) => 1.0 - p,
-            // ADSR Decay: 127 → sustain_level
-            (mode::ADSR, 1) => 1.0 - p * (1.0 - sus),
-            // ADSR Release: sustain_level → 0
-            (mode::ADSR, 3) => sus * (1.0 - p),
-            _ => 0.0,
-        } * 127.0) as u8;
+        let value = ((self.resolve(from) + p * (self.resolve(to) - self.resolve(from))) * 127.0) as u8;
 
         let mut messages = Vec::<MidiMsg, 3>::new();
-        let _ = messages.push(self.make_cc(value));
+        messages.push(self.make_cc(value)).ok();
         Some(messages)
     }
 
     fn reset(&mut self) -> super::Messages {
-        self.stage = 0;
+        self.stage_idx = 0;
         let mut messages = Vec::<MidiMsg, 3>::new();
-        let _ = messages.push(self.make_cc(0));
+        messages.push(self.make_cc(0)).ok();
         Some(messages)
     }
 }
