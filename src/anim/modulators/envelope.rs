@@ -71,7 +71,6 @@ impl Modulation for Envelope {
         self.stage += 1;
         let done = self.stage == STAGES;
         if done {
-            info!("done anim");
             self.stage = 0;
         }
         !done
@@ -83,7 +82,6 @@ impl Modulation for Envelope {
         } else {
             progress
         };
-        info!("mult {}", mult);
         let value: u8 = (mult * 127.0) as u8;
         let mut messages = Vec::<MidiMsg, 3>::new();
         let _ = messages.push(MidiMsg::ChannelVoice {

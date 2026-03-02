@@ -55,14 +55,10 @@ impl AnimationEngine {
                 last_updated,
                 progress_at: progress,
             } => {
-                let duration = self
-                    .modulator
-                    .as_ref()
-                    .map(|m| m.duration_ms())
-                    .unwrap_or(0);
-                if duration == 0 {
-                    return self.recv_cmd().await;
-                }
+                let Some(modulator) = self.modulator.as_mut() else {
+                    return None;
+                };
+                let duration = modulator.duration_ms();
 
                 futures::select_biased! {
                     new_msg = self.recv_cmd().fuse() => new_msg,
@@ -100,6 +96,7 @@ impl AnimationEngine {
         match cmd {
             Cmd::Start(modulator) => {
                 let mut messages = if let Some(old_mod) = self.modulator.as_mut() {
+                    // resetting at start causes 2 identical messages (with 0 "reset" value) sent.
                     old_mod.reset().unwrap_or(heapless::Vec::new())
                 } else {
                     heapless::Vec::new()
