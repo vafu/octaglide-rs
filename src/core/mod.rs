@@ -2,9 +2,11 @@ mod consumers;
 mod transformers;
 
 use alloc::vec;
+use core::sync::atomic::Ordering::Relaxed;
 use log::info;
 use midi_msg::MidiMsg;
 
+use crate::anim::modulators::envelope::CONFIGS;
 use crate::core::{consumers::ModTrigger, transformers::Transformers};
 use crate::midi_fmt::MidiFmt;
 
@@ -42,6 +44,12 @@ pub struct Core {
 #[derive(Debug)]
 pub enum Input {
     Process(MidiEvent),
+    AnalogUpdate { index: u8, value: u16 },
+    /// Encoder rotated: +1 = CW, -1 = CCW.
+    /// Generic — currently cycles envelope mode, will drive menus/params later.
+    EncoderStep(i8),
+    /// Encoder push-button clicked.
+    EncoderClick,
 }
 
 macro_rules! vec {
@@ -88,6 +96,29 @@ impl Core {
                     let Some(e) = event else { break };
                     event = consumer.consume(e).await;
                 }
+            }
+            Input::AnalogUpdate { index, value } => {
+                // Map 10-bit ADC (0-1023) to 0-127
+                let param = (value >> 3) as u8;
+                let config = &CONFIGS[0];
+                match index {
+                    3 => config.attack.store(param, Relaxed),
+                    2 => config.decay.store(param, Relaxed),
+                    1 => config.sustain.store(param, Relaxed),
+                    0 => config.release.store(param, Relaxed),
+                    _ => {}
+                }
+            }
+            Input::EncoderStep(delta) => {
+                // Cycle envelope mode: AD(0) → AR(1) → ADSR(2) → wrap
+                let config = &CONFIGS[0];
+                let current = config.mode.load(Relaxed) as i8;
+                let next = (current + delta).rem_euclid(3) as u8;
+                config.mode.store(next, Relaxed);
+                info!("Envelope mode → {}", next);
+            }
+            Input::EncoderClick => {
+                // TODO: implement encoder click action
             }
         }
     }

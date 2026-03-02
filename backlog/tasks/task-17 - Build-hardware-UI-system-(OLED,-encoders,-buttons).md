@@ -4,12 +4,14 @@ title: 'Build hardware UI system (OLED, encoders, buttons)'
 status: To Do
 assignee: []
 created_date: '2025-11-19 16:51'
+updated_date: '2026-03-02 03:57'
 labels:
   - ui
   - hardware
   - feature
 dependencies: []
 priority: high
+ordinal: 1000
 ---
 
 ## Description

@@ -57,6 +57,7 @@ mod app {
     use teensy4_bsp::{
         board,
         hal::{
+            adc,
             gpio,
             iomuxc::{
                 self,
@@ -116,7 +117,16 @@ mod app {
     struct Local {
         led: board::Led,
         core: Core,
-        reset_btn: gpio::Input<pins::P14>,
+        reset_btn: gpio::Input<pins::P33>,
+        adc1: adc::Adc<1>,
+        slider0: adc::AnalogInput<pins::P14, 1>,
+        slider1: adc::AnalogInput<pins::P15, 1>,
+        slider2: adc::AnalogInput<pins::P16, 1>,
+        slider3: adc::AnalogInput<pins::P17, 1>,
+        enc_a: gpio::Input<pins::P20>,
+        enc_b: gpio::Input<pins::P19>,
+        enc_click: gpio::Input<pins::P18>,
+        enc_sender: CoreSender,
     }
 
     #[global_allocator]
@@ -155,8 +165,10 @@ mod app {
         );
 
         let board::Resources {
-            mut gpio2,
             mut gpio1,
+            mut gpio2,
+            mut gpio4,
+            adc1,
             mut pins,
             usb,
             lpuart6,
@@ -174,16 +186,38 @@ mod app {
         let glide_animator = make_animator!(animate_glide, midi_sender);
         let envelope_animator = make_animator!(animate_envelope, midi_sender);
 
-        // Configure reset button (P14) with pulldown for interrupt on rising edge (button press to 3.3V)
-        // Wire momentary button from P14 to 3.3V
+        // Configure reset button (P33 / GPIO4_IO07) with pullup for interrupt on rising edge
+        // Wire momentary button from P33 to 3.3V
         iomuxc::configure(
-            &mut pins.p14,
+            &mut pins.p33,
             iomuxc::Config::zero().set_pull_keeper(Some(iomuxc::PullKeeper::Pullup100k)),
         );
-        let reset_btn = gpio1.input(pins.p14);
+        let reset_btn = gpio4.input(pins.p33);
 
         // Enable GPIO interrupt on rising edge (button press)
-        gpio1.set_interrupt(&reset_btn, Some(gpio::Trigger::RisingEdge));
+        gpio4.set_interrupt(&reset_btn, Some(gpio::Trigger::RisingEdge));
+
+        // Configure rotary encoder on P18 (A), P19 (B), P20 (Click) — all GPIO1_COMBINED_16_31
+        // Wiring: encoder common → 3.3V, A/B/Click pins → pulldown to GND
+        // TODO(task-28): upgrade to full quadrature decoding for better reliability at high speed
+        let enc_cfg = iomuxc::Config::zero().set_pull_keeper(Some(iomuxc::PullKeeper::Pullup100k));
+        iomuxc::configure(&mut pins.p18, enc_cfg);
+        iomuxc::configure(&mut pins.p19, enc_cfg);
+        iomuxc::configure(&mut pins.p20, enc_cfg);
+        let enc_a = gpio1.input(pins.p20);
+        let enc_b = gpio1.input(pins.p19);
+        let enc_click = gpio1.input(pinshk.p18);
+        gpio1.set_interrupt(&enc_a, Some(gpio::Trigger::FallingEdge));
+        gpio1.set_interrupt(&enc_click, Some(gpio::Trigger::FallingEdge));
+
+        // Configure ADC sliders on pins 14-17 (A0-A3): Attack, Decay, Sustain, Release
+        // TODO: move sliders to ACMP (comparator) pins for interrupt-driven change detection.
+        // IMXRT1060 has 4 ACMP channels (ACMP1-4) which would fit all 4 sliders.
+        // Use tracking comparator pattern: read value in ISR, reprogram threshold to new_value ± hysteresis.
+        let slider0 = adc::AnalogInput::new(pins.p14);
+        let slider1 = adc::AnalogInput::new(pins.p15);
+        let slider2 = adc::AnalogInput::new(pins.p16);
+        let slider3 = adc::AnalogInput::new(pins.p17);
 
         midi_dispatch::spawn(midi_receiver).unwrap();
         core_task::spawn(core_receiver).unwrap();
@@ -192,6 +226,9 @@ mod app {
         // Create UART bus for RX
         let uart_bus =
             UartMidiBus::new(prepare_uart(lpuart6, pins.p1, pins.p0), core_sender.clone());
+
+        let enc_sender = core_sender.clone();
+        read_sliders::spawn(core_sender).unwrap();
 
         // Create USB bus for TX
         let usb_bus = UsbMidiBus::new();
@@ -205,6 +242,15 @@ mod app {
                 led: board::led(&mut gpio2, pins.p13),
                 core: Core::new(midi_sender, glide_animator, envelope_animator),
                 reset_btn,
+                adc1,
+                slider0,
+                slider1,
+                slider2,
+                slider3,
+                enc_a,
+                enc_b,
+                enc_click,
+                enc_sender,
             },
         )
     }
@@ -310,14 +356,56 @@ mod app {
 
     /// Reset button interrupt handler
     ///
-    /// P14 (GPIO1_IO18) with pulldown - wire button from P14 to 3.3V
+    /// P33 (GPIO4_IO07) with pullup - wire button from P33 to 3.3V
     /// Triggers on rising edge, immediately resets the MCU
-    #[task(binds = GPIO1_COMBINED_16_31, local = [reset_btn], priority = 2)]
+    #[task(binds = GPIO4_COMBINED_0_15, local = [reset_btn], priority = 2)]
     fn reset_button_isr(cx: reset_button_isr::Context) {
         let btn = cx.local.reset_btn;
         if btn.is_triggered() {
             btn.clear_triggered();
             cortex_m::peripheral::SCB::sys_reset();
+        }
+    }
+
+    /// Rotary encoder interrupt handler — P18 (A), P19 (B), P20 (Click), all GPIO1_COMBINED_16_31.
+    /// Simple decoding: interrupt on A rising edge, read B level for direction.
+    /// TODO(task-28): upgrade to full quadrature decoding (both edges of A+B, lookup table)
+    ///                for better reliability at high speed and natural bounce filtering.
+    #[task(binds = GPIO1_COMBINED_16_31, local = [enc_a, enc_b, enc_click, enc_sender], priority = 2)]
+    fn encoder_isr(cx: encoder_isr::Context) {
+        if cx.local.enc_a.is_triggered() {
+            cx.local.enc_a.clear_triggered();
+            // B HIGH when A falls → CW, B LOW (already fell) → CCW
+            let delta: i8 = if cx.local.enc_b.is_set() { 1 } else { -1 };
+            cx.local.enc_sender.try_send(CoreIn::EncoderStep(delta)).ok();
+        }
+        if cx.local.enc_click.is_triggered() {
+            cx.local.enc_click.clear_triggered();
+            cx.local.enc_sender.try_send(CoreIn::EncoderClick).ok();
+        }
+    }
+
+    /// Periodically reads 4 ADC sliders (P14-P17) and sends ADSR parameter updates to core.
+    /// Sliders map: 0=Attack, 1=Decay, 2=Sustain, 3=Release
+    /// Only sends an update when a slider value changes by more than SLIDER_DEADBAND counts.
+    #[task(local = [adc1, slider0, slider1, slider2, slider3, prev: [u16; 4] = [u16::MAX; 4]], priority = 1)]
+    async fn read_sliders(cx: read_sliders::Context, mut sender: CoreSender) -> ! {
+        const DEADBAND: u16 = 4;
+        loop {
+            let readings = [
+                cx.local.adc1.read_blocking(cx.local.slider0),
+                cx.local.adc1.read_blocking(cx.local.slider1),
+                cx.local.adc1.read_blocking(cx.local.slider2),
+                cx.local.adc1.read_blocking(cx.local.slider3),
+            ];
+            for (i, &value) in readings.iter().enumerate() {
+                let prev = &mut cx.local.prev[i];
+                if value.abs_diff(*prev) > DEADBAND {
+                    *prev = value;
+                    sender.send(CoreIn::AnalogUpdate { index: i as u8, value }).await.ok();
+                }
+            }
+            Systick::delay(50.millis()).await;
         }
     }
 

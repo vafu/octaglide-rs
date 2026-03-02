@@ -10,6 +10,8 @@ OctaglideRS is an embedded Rust MIDI processor that runs on a Teensy 4.1 microco
 
 **Task Management**: All project tasks and planning are managed via Backlog.md (see BACKLOG.MD MCP section at the bottom of this file)
 
+**Pin Assignments**: See [PINOUT.md](PINOUT.md) for the current hardware pin assignment table. Keep it up to date when adding or changing hardware.
+
 ## Core Design Principles
 
 ### 🎯 Portability First
@@ -355,7 +357,11 @@ Future extensions (tracked in Backlog.md): filters, post-processors, presets, co
 - Respect RTIC task priorities and shared resource locking
 - Log extensively (USB logging available)
 - Consider real-time constraints (MIDI timing critical, ~3ms jitter noticeable)
-- Consult Backlog.md for tasks and planning
+- **Use Backlog.md actively** - create tasks for any non-trivial planned work, improvements, or known limitations. Search before creating to avoid duplicates.
+- **Reference backlog tasks in code TODOs** using the format `// TODO(task-#): description` so code and backlog stay linked. Example:
+  ```rust
+  // TODO(task-28): upgrade to full quadrature decoding for better reliability
+  ```
 
 ### DON'T:
 - Mix platform-specific code into core modules (`src/core/`, `src/anim/`)
