@@ -114,17 +114,17 @@ impl Core {
                 let config = &CONFIGS[0];
                 match self.encoder_mode {
                     EncoderMode::Time => match index {
-                        0 => config.attack.store(param, Relaxed),
-                        1 => config.decay.store(param, Relaxed),
-                        2 => config.sustain.store(param, Relaxed),
-                        3 => config.release.store(param, Relaxed),
+                        3 => config.attack.store(param, Relaxed),
+                        2 => config.decay.store(param, Relaxed),
+                        1 => config.sustain.store(param, Relaxed),
+                        0 => config.release.store(param, Relaxed),
                         _ => {}
                     },
                     EncoderMode::Curve => match index {
-                        0 => config.curve_attack.store(param, Relaxed),
-                        1 => config.curve_decay.store(param, Relaxed),
-                        2 => config.sustain.store(param, Relaxed), // sustain level, no curve concept
-                        3 => config.curve_release.store(param, Relaxed),
+                        3 => config.curve_attack.store(param, Relaxed),
+                        2 => config.curve_decay.store(param, Relaxed),
+                        1 => config.sustain.store(param, Relaxed), // sustain level, no curve concept
+                        0 => config.curve_release.store(param, Relaxed),
                         _ => {}
                     },
                 }
