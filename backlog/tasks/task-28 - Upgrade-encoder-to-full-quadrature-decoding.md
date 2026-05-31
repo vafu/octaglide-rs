@@ -4,12 +4,14 @@ title: Upgrade encoder to full quadrature decoding
 status: To Do
 assignee: []
 created_date: '2026-03-02 04:08'
+updated_date: '2026-03-04 07:45'
 labels:
   - hardware
   - encoder
   - performance
 dependencies: []
 priority: low
+ordinal: 11000
 ---
 
 ## Description

@@ -4,12 +4,14 @@ title: Implement quantizer mode
 status: To Do
 assignee: []
 created_date: '2025-11-19 16:51'
+updated_date: '2026-03-04 07:45'
 labels:
   - quantizer
   - feature
   - music-theory
 dependencies: []
 priority: medium
+ordinal: 3000
 ---
 
 ## Description

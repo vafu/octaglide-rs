@@ -121,8 +121,8 @@ mod app {
         adc1: adc::Adc<1>,
         slider0: adc::AnalogInput<pins::P14, 1>,
         slider1: adc::AnalogInput<pins::P15, 1>,
-        slider2: adc::AnalogInput<pins::P16, 1>,
-        slider3: adc::AnalogInput<pins::P17, 1>,
+        slider2: adc::AnalogInput<pins::P24, 1>,
+        slider3: adc::AnalogInput<pins::P25, 1>,
         enc_a: gpio::Input<pins::P20>,
         enc_b: gpio::Input<pins::P19>,
         enc_click: gpio::Input<pins::P18>,
@@ -172,6 +172,7 @@ mod app {
             mut pins,
             usb,
             lpuart6,
+            lpi2c3,
             ..
         } = brd(cx.device);
 
@@ -210,14 +211,18 @@ mod app {
         gpio1.set_interrupt(&enc_a, Some(gpio::Trigger::FallingEdge));
         gpio1.set_interrupt(&enc_click, Some(gpio::Trigger::FallingEdge));
 
-        // Configure ADC sliders on pins 14-17 (A0-A3): Attack, Decay, Sustain, Release
+        // Configure ADC sliders: Attack/Decay on P14/P15, Sustain/Release moved to P24/P25
+        // (P16/P17 freed for LPI2C3 OLED)
         // TODO: move sliders to ACMP (comparator) pins for interrupt-driven change detection.
         // IMXRT1060 has 4 ACMP channels (ACMP1-4) which would fit all 4 sliders.
         // Use tracking comparator pattern: read value in ISR, reprogram threshold to new_value ± hysteresis.
         let slider0 = adc::AnalogInput::new(pins.p14);
         let slider1 = adc::AnalogInput::new(pins.p15);
-        let slider2 = adc::AnalogInput::new(pins.p16);
-        let slider3 = adc::AnalogInput::new(pins.p17);
+        let slider2 = adc::AnalogInput::new(pins.p24);
+        let slider3 = adc::AnalogInput::new(pins.p25);
+
+        let i2c = board::lpi2c(lpi2c3, pins.p16, pins.p17, board::Lpi2cClockSpeed::MHz1);
+        oled_task::spawn(i2c).ok();
 
         midi_dispatch::spawn(midi_receiver).unwrap();
         core_task::spawn(core_receiver).unwrap();
@@ -426,5 +431,129 @@ mod app {
         sender: MidiSender,
     ) -> ! {
         run_animator_loop(engine, sender, "glide").await
+    }
+
+    #[task(priority = 1)]
+    async fn oled_task(_cx: oled_task::Context, i2c: board::Lpi2c3) {
+        use core::sync::atomic::Ordering::Relaxed;
+        use embedded_graphics::{
+            mono_font::{ascii::FONT_5X8, MonoTextStyle},
+            pixelcolor::BinaryColor,
+            prelude::*,
+            primitives::{Line, PrimitiveStyle},
+            text::Text,
+        };
+        use sh1106::{mode::GraphicsMode, Builder};
+        use crate::anim::modulators::envelope::CONFIGS;
+
+        Systick::delay(1000.millis()).await;
+
+        let mut oled: GraphicsMode<_> = Builder::new().connect_i2c(i2c).into();
+        if oled.init().is_err() {
+            log::error!("OLED init failed");
+            return;
+        }
+        log::info!("OLED ok");
+
+        let line_style = PrimitiveStyle::with_stroke(BinaryColor::On, 1);
+        let text_style = MonoTextStyle::new(&FONT_5X8, BinaryColor::On);
+
+        // Track last-rendered values to skip unnecessary redraws
+        let mut last: (u32, u32, u8, u32, u8, u8, u8, u8) = (u32::MAX, u32::MAX, 0, u32::MAX, 0, 0, 0, u8::MAX);
+
+        loop {
+            let cfg = &CONFIGS[0];
+            let a_dur = cfg.attack.duration.load(Relaxed) as u32;
+            let d_dur = cfg.decay.duration.load(Relaxed) as u32;
+            let s_val = cfg.sustain.load(Relaxed) as f32 / 127.0;
+            let s_raw = cfg.sustain.load(Relaxed);
+            let r_dur = cfg.release.duration.load(Relaxed) as u32;
+            let a_crv = cfg.attack.curve.load(Relaxed);
+            let d_crv = cfg.decay.curve.load(Relaxed);
+            let r_crv = cfg.release.curve.load(Relaxed);
+            let mode  = cfg.mode.load(Relaxed);
+
+            let current = (a_dur, d_dur, s_raw, r_dur, a_crv, d_crv, r_crv, mode);
+            if current == last {
+                Systick::delay(16.millis()).await;
+                continue;
+            }
+            last = current;
+
+            // Fixed sustain hold width in "duration units" for display purposes
+            const S_HOLD: u32 = 20;
+
+            // Pixel widths per stage (0..128); remainder goes to last stage
+            let (a_px, d_px, s_px, r_px): (u32, u32, u32, u32) = {
+                let total = match mode {
+                    0 => a_dur + d_dur,
+                    1 => a_dur + S_HOLD + r_dur,
+                    _ => a_dur + d_dur + S_HOLD + r_dur,
+                }.max(1);
+                match mode {
+                    0 => { let a = a_dur * 127 / total; (a, 127 - a, 0, 0) },
+                    1 => { let a = a_dur * 127 / total; let s = S_HOLD * 127 / total; (a, 0, s, 127 - a - s) },
+                    _ => { let a = a_dur * 127 / total; let d = d_dur * 127 / total; let s = S_HOLD * 127 / total; (a, d, s, 127 - a - d - s) },
+                }
+            };
+
+            oled.clear();
+
+            // Mode label
+            let mode_str = match mode { 0 => "AD", 1 => "AR", _ => "ADSR" };
+            Text::new(mode_str, Point::new(0, 7), text_style).draw(&mut oled).ok();
+
+            // Envelope shape: y=9 (level=1.0) to y=63 (level=0.0)
+            const TOP: i32 = 9;
+            const BOT: i32 = 63;
+            const H: i32 = BOT - TOP;
+
+            let level_at = |x: u32| -> f32 {
+                match mode {
+                    0 => if x < a_px {
+                            env_curve(x as f32 / a_px.max(1) as f32, a_crv)
+                        } else {
+                            1.0 - env_curve((x - a_px) as f32 / d_px.max(1) as f32, d_crv)
+                        },
+                    1 => if x < a_px {
+                            env_curve(x as f32 / a_px.max(1) as f32, a_crv)
+                        } else if x < a_px + s_px {
+                            1.0
+                        } else {
+                            1.0 - env_curve((x - a_px - s_px) as f32 / r_px.max(1) as f32, r_crv)
+                        },
+                    _ => if x < a_px {
+                            env_curve(x as f32 / a_px.max(1) as f32, a_crv)
+                        } else if x < a_px + d_px {
+                            1.0 - env_curve((x - a_px) as f32 / d_px.max(1) as f32, d_crv) * (1.0 - s_val)
+                        } else if x < a_px + d_px + s_px {
+                            s_val
+                        } else {
+                            s_val * (1.0 - env_curve((x - a_px - d_px - s_px) as f32 / r_px.max(1) as f32, r_crv))
+                        },
+                }
+            };
+
+            let to_y = |lv: f32| BOT - (lv.clamp(0.0, 1.0) * H as f32) as i32;
+
+            let mut prev_y = to_y(level_at(0));
+            for x in 1u32..128 {
+                let y = to_y(level_at(x));
+                Line::new(Point::new(x as i32 - 1, prev_y), Point::new(x as i32, y))
+                    .into_styled(line_style)
+                    .draw(&mut oled)
+                    .ok();
+                prev_y = y;
+            }
+
+            oled.flush().ok();
+            Systick::delay(16.millis()).await;
+        }
+    }
+
+    fn env_curve(progress: f32, curve: u8) -> f32 {
+        use libm::powf;
+        let exp = powf(2.0, (curve as f32 - 64.0) / 32.0);
+        powf(progress.clamp(0.0, 1.0), exp)
     }
 }

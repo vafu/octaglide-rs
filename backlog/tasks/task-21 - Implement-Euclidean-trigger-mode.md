@@ -4,6 +4,7 @@ title: Implement Euclidean trigger mode
 status: To Do
 assignee: []
 created_date: '2025-11-19 16:51'
+updated_date: '2026-03-04 07:45'
 labels:
   - euclidean
   - trigger
@@ -12,6 +13,7 @@ labels:
 dependencies:
   - task-20
 priority: low
+ordinal: 6000
 ---
 
 ## Description

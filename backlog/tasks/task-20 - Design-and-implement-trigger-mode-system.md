@@ -4,12 +4,14 @@ title: Design and implement trigger mode system
 status: To Do
 assignee: []
 created_date: '2025-11-19 16:51'
+updated_date: '2026-03-04 07:45'
 labels:
   - architecture
   - trigger
   - sequencer
 dependencies: []
 priority: medium
+ordinal: 5000
 ---
 
 ## Description

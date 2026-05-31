@@ -4,13 +4,14 @@ title: Fix USB host time source callback mechanism
 status: To Do
 assignee: []
 created_date: '2026-01-25 20:49'
-updated_date: '2026-03-02 04:00'
+updated_date: '2026-03-04 07:45'
 labels:
   - bug
   - usb
   - investigation
 dependencies: []
 priority: low
+ordinal: 9000
 ---
 
 ## Description

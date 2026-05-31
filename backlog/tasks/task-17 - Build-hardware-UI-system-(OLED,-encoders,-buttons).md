@@ -1,10 +1,10 @@
 ---
 id: task-17
 title: 'Build hardware UI system (OLED, encoders, buttons)'
-status: To Do
+status: In Progress
 assignee: []
 created_date: '2025-11-19 16:51'
-updated_date: '2026-03-02 03:57'
+updated_date: '2026-03-04 07:44'
 labels:
   - ui
   - hardware

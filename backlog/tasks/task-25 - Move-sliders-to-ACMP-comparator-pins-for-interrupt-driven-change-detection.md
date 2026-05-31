@@ -4,10 +4,12 @@ title: Move sliders to ACMP comparator pins for interrupt-driven change detectio
 status: To Do
 assignee: []
 created_date: '2026-03-02 03:55'
+updated_date: '2026-03-04 07:45'
 labels:
   - performance
 dependencies: []
 priority: low
+ordinal: 10000
 ---
 
 ## Description
