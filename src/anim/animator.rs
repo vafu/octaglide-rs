@@ -1,5 +1,6 @@
 use futures::FutureExt;
 use log::info;
+use midi_msg::{Channel, ChannelVoiceMsg, ControlChange, MidiMsg};
 use rtic_monotonics::{
     Monotonic,
     systick::{ExtU32, Systick, fugit::Instant},
@@ -23,6 +24,7 @@ pub struct AnimationEngine {
     state: State,
     _depth: f32,
     modulator: Option<Modulator>,
+    last_continuous: heapless::Vec<MidiMsg, DEDUPE_SLOTS>,
 }
 
 #[derive(Debug)]
@@ -35,6 +37,7 @@ enum State {
 }
 
 const MSG_INTERVAL_MS: u32 = 5;
+const DEDUPE_SLOTS: usize = 4;
 
 impl AnimationEngine {
     pub fn new(rx: Receiver<'static, Cmd, 1>) -> Self {
@@ -44,6 +47,7 @@ impl AnimationEngine {
             state: State::Idle,
             _depth: 1.0,
             modulator: None,
+            last_continuous: heapless::Vec::new(),
         }
     }
 
@@ -81,10 +85,50 @@ impl AnimationEngine {
                                 progress_at: new_progress,
                             }
                         }
-                        res
+                        self.dedupe_messages(res)
                     }
                 }
             }
+        }
+    }
+
+    fn dedupe_messages(&mut self, messages: Messages) -> Messages {
+        let mut output = heapless::Vec::new();
+
+        for msg in messages? {
+            if self.is_duplicate_continuous(&msg) {
+                continue;
+            }
+            let _ = output.push(msg);
+        }
+
+        if output.is_empty() {
+            None
+        } else {
+            Some(output)
+        }
+    }
+
+    fn is_duplicate_continuous(&mut self, msg: &MidiMsg) -> bool {
+        let Some(pos) = self
+            .last_continuous
+            .iter()
+            .position(|last| same_continuous_target(last, msg))
+        else {
+            if is_continuous(msg) {
+                if self.last_continuous.push(msg.clone()).is_err() {
+                    self.last_continuous.remove(0);
+                    let _ = self.last_continuous.push(msg.clone());
+                }
+            }
+            return false;
+        };
+
+        if self.last_continuous[pos] == *msg {
+            true
+        } else {
+            self.last_continuous[pos] = msg.clone();
+            false
         }
     }
 
@@ -95,6 +139,7 @@ impl AnimationEngine {
         };
         match cmd {
             Cmd::Start(modulator) => {
+                self.last_continuous.clear();
                 let mut messages = if let Some(old_mod) = self.modulator.as_mut() {
                     // resetting at start causes 2 identical messages (with 0 "reset" value) sent.
                     old_mod.reset().unwrap_or(heapless::Vec::new())
@@ -114,15 +159,82 @@ impl AnimationEngine {
                     }
                 }
 
-                Some(messages)
+                self.dedupe_messages(Some(messages))
             }
-            Cmd::Stop => match self.state {
-                State::Animating { .. } => {
-                    self.state = State::Idle;
-                    self.modulator.as_mut()?.reset()
-                }
-                State::Idle => self.modulator.as_mut()?.reset(),
-            },
+            Cmd::Stop => {
+                let messages = match self.state {
+                    State::Animating { .. } => {
+                        self.state = State::Idle;
+                        self.modulator.as_mut()?.reset()
+                    }
+                    State::Idle => self.modulator.as_mut()?.reset(),
+                };
+                let messages = self.dedupe_messages(messages);
+                self.last_continuous.clear();
+                messages
+            }
         }
+    }
+}
+
+fn is_continuous(msg: &MidiMsg) -> bool {
+    let Some((_, voice)) = channel_voice(msg) else {
+        return false;
+    };
+
+    matches!(
+        voice,
+        ChannelVoiceMsg::ControlChange {
+            control: ControlChange::CC { .. } | ControlChange::CCHighRes { .. }
+        } | ChannelVoiceMsg::PitchBend { .. }
+    )
+}
+
+fn same_continuous_target(a: &MidiMsg, b: &MidiMsg) -> bool {
+    let (Some((a_channel, a_voice)), Some((b_channel, b_voice))) =
+        (channel_voice(a), channel_voice(b))
+    else {
+        return false;
+    };
+
+    if a_channel != b_channel {
+        return false;
+    }
+
+    match (a_voice, b_voice) {
+        (
+            ChannelVoiceMsg::ControlChange { control: a_control },
+            ChannelVoiceMsg::ControlChange { control: b_control },
+        ) => same_control_target(a_control, b_control),
+        (ChannelVoiceMsg::PitchBend { .. }, ChannelVoiceMsg::PitchBend { .. }) => true,
+        _ => false,
+    }
+}
+
+fn channel_voice(msg: &MidiMsg) -> Option<(Channel, &ChannelVoiceMsg)> {
+    match msg {
+        MidiMsg::ChannelVoice { channel, msg } | MidiMsg::RunningChannelVoice { channel, msg } => {
+            Some((*channel, msg))
+        }
+        _ => None,
+    }
+}
+
+fn same_control_target(a: &ControlChange, b: &ControlChange) -> bool {
+    match (a, b) {
+        (ControlChange::CC { control: a, .. }, ControlChange::CC { control: b, .. }) => a == b,
+        (
+            ControlChange::CCHighRes {
+                control1: a1,
+                control2: a2,
+                ..
+            },
+            ControlChange::CCHighRes {
+                control1: b1,
+                control2: b2,
+                ..
+            },
+        ) => a1 == b1 && a2 == b2,
+        _ => false,
     }
 }

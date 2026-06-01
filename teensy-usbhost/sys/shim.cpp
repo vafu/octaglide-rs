@@ -121,7 +121,7 @@ void cpp_send_midi(const uint8_t *data, uint8_t len) {
     break;
   case 0xE0: // Pitch Bend (14-bit value, LSB first)
     if (len >= 3) {
-      uint16_t bend = data[1] | (data[2] << 7);
+      int bend = (data[1] | (data[2] << 7)) - 8192;
       midi->sendPitchBend(bend, channel);
     }
     break;
