@@ -25,8 +25,8 @@ fn panic(info: &PanicInfo) -> ! {
 
 mod anim;
 mod core;
-mod held_notes;
 mod midi;
+mod state;
 mod ui;
 mod usb;
 
@@ -55,8 +55,7 @@ mod app {
     use teensy4_bsp::{
         board,
         hal::{
-            adc,
-            gpio,
+            adc, gpio,
             iomuxc::{
                 self,
                 consts::Const,

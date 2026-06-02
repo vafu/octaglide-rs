@@ -1,13 +1,12 @@
-use core::sync::atomic::Ordering::Relaxed;
-
 use midi_msg::{ChannelVoiceMsg, ControlChange, MidiMsg};
 
 use crate::{
     anim::{
         animator::Cmd,
-        modulators::{Envelope, Modulator, envelope::CONFIGS},
+        modulators::{Envelope, Modulator},
     },
     app::Animator,
+    state,
 };
 
 #[derive(Debug)]
@@ -29,12 +28,11 @@ impl super::Consumer for ModTrigger {
 
         match msg {
             ChannelVoiceMsg::NoteOn { .. } => {
+                if !state::has_voice(channel).await {
+                    return Some(event);
+                }
                 self.animator
-                    .send(Cmd::Start(Modulator::Envelope(Envelope::new(
-                        channel,
-                        2,
-                        &CONFIGS[0],
-                    ))))
+                    .send(Cmd::Start(Modulator::Envelope(Envelope::new(channel, 2))))
                     .await
                     .unwrap();
                 Some(event)
@@ -42,14 +40,23 @@ impl super::Consumer for ModTrigger {
             ChannelVoiceMsg::ControlChange {
                 control: ControlChange::CC { control, value },
             } => {
-                match control {
-                    // CC 1-5: envelope parameters for CONFIGS[0]
-                    1 => CONFIGS[0].attack.duration.store(value, Relaxed),
-                    2 => CONFIGS[0].decay.duration.store(value, Relaxed),
-                    3 => CONFIGS[0].release.duration.store(value, Relaxed),
-                    4 => CONFIGS[0].sustain.store(value, Relaxed),
-                    5 => CONFIGS[0].mode.store(value.min(2), Relaxed),
-                    _ => return Some(event),
+                let consumed = state::edit_voice(channel, |voice| {
+                    let envelope = &mut voice.envelope;
+                    match control {
+                        // Temporary: route CC edits to the incoming event channel's voice.
+                        1 => envelope.attack.duration = value,
+                        2 => envelope.decay.duration = value,
+                        3 => envelope.release.duration = value,
+                        4 => envelope.sustain = value,
+                        5 => envelope.mode = value.min(2),
+                        _ => return false,
+                    }
+                    true
+                })
+                .await
+                .unwrap_or(false);
+                if !consumed {
+                    return Some(event);
                 }
                 None
             }

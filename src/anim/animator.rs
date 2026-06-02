@@ -62,7 +62,7 @@ impl AnimationEngine {
                 let Some(modulator) = self.modulator.as_mut() else {
                     return None;
                 };
-                let duration = modulator.duration_ms();
+                let duration = modulator.duration_ms().await;
 
                 futures::select_biased! {
                     new_msg = self.recv_cmd().fuse() => new_msg,
@@ -71,9 +71,9 @@ impl AnimationEngine {
                         let elapsed = now - last_updated;
                         let progress_delta = if duration == 0 { 1.0 } else { elapsed.to_millis() as f32 / duration as f32 };
                         let new_progress = (progress + progress_delta).clamp(0.0, 1.0);
-                        let res = self.modulator.as_mut()?.animate(new_progress, 1.0, 1.0);
+                        let res = self.modulator.as_mut()?.animate(new_progress, 1.0, 1.0).await;
                         if new_progress >= 1.0 {
-                            self.state = if self.modulator.as_mut()?.next_stage() || self.looping {
+                            self.state = if self.modulator.as_mut()?.next_stage().await || self.looping {
                                 State::Animating { last_updated: now, progress_at: 0.0 }
                             } else {
                                 info!("anim end");
@@ -142,7 +142,7 @@ impl AnimationEngine {
                 self.last_continuous.clear();
                 let mut messages = if let Some(old_mod) = self.modulator.as_mut() {
                     // resetting at start causes 2 identical messages (with 0 "reset" value) sent.
-                    old_mod.reset().unwrap_or(heapless::Vec::new())
+                    old_mod.reset().await.unwrap_or(heapless::Vec::new())
                 } else {
                     heapless::Vec::new()
                 };
@@ -153,7 +153,7 @@ impl AnimationEngine {
                 };
                 self.modulator = Some(modulator);
 
-                if let Some(new_msgs) = self.modulator.as_mut()?.animate(0.0, 0.0, 0.0) {
+                if let Some(new_msgs) = self.modulator.as_mut()?.animate(0.0, 0.0, 0.0).await {
                     for msg in new_msgs {
                         let _ = messages.push(msg);
                     }
@@ -165,9 +165,9 @@ impl AnimationEngine {
                 let messages = match self.state {
                     State::Animating { .. } => {
                         self.state = State::Idle;
-                        self.modulator.as_mut()?.reset()
+                        self.modulator.as_mut()?.reset().await
                     }
-                    State::Idle => self.modulator.as_mut()?.reset(),
+                    State::Idle => self.modulator.as_mut()?.reset().await,
                 };
                 let messages = self.dedupe_messages(messages);
                 self.last_continuous.clear();

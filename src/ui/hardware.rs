@@ -1,9 +1,6 @@
 use rtic_monotonics::systick::{ExtU32, Systick};
 
-use crate::{
-    app::CoreSender,
-    core::Input as CoreIn,
-};
+use crate::{app::CoreSender, core::Input as CoreIn};
 
 pub fn handle_encoder_interrupt(cx: crate::app::encoder_isr::Context<'_>) {
     if cx.local.enc_a.is_triggered() {
@@ -20,10 +17,7 @@ pub fn handle_encoder_interrupt(cx: crate::app::encoder_isr::Context<'_>) {
     }
 }
 
-pub async fn read_sliders(
-    cx: crate::app::read_sliders::Context<'_>,
-    mut sender: CoreSender,
-) -> ! {
+pub async fn read_sliders(cx: crate::app::read_sliders::Context<'_>, mut sender: CoreSender) -> ! {
     const DEADBAND: u16 = 4;
 
     loop {

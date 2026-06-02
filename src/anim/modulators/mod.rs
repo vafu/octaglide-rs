@@ -9,10 +9,10 @@ pub type Messages = Option<Vec<MidiMsg, 3>>;
 
 #[enum_dispatch]
 pub trait Modulation {
-    fn duration_ms(&self) -> u32;
-    fn animate(&mut self, progress: f32, depth: f32, offset: f32) -> Messages;
-    fn reset(&mut self) -> Messages;
-    fn next_stage(&mut self) -> bool;
+    async fn duration_ms(&self) -> u32;
+    async fn animate(&mut self, progress: f32, depth: f32, offset: f32) -> Messages;
+    async fn reset(&mut self) -> Messages;
+    async fn next_stage(&mut self) -> bool;
 }
 
 #[enum_dispatch(Modulation)]

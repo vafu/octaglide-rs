@@ -9,18 +9,21 @@ use midi_msg::{
 use crate::{
     anim::{
         animator::Cmd,
-        modulators::{Glide, Modulator, glide},
+        modulators::{Glide, Modulator},
     },
     app::{Animator, MidiSender},
     core::{MidiEvent, MidiOut},
-    held_notes,
+    state,
 };
 
 const MAX_HELD_NOTES: usize = 8;
+const MIDI_CHANNELS: usize = 16;
+
+type HeldNoteStack = Vec<u8, MAX_HELD_NOTES>;
 
 #[derive(Debug)]
 pub struct Glider {
-    held_notes: Vec<u8, MAX_HELD_NOTES>,
+    held_by_channel: [HeldNoteStack; MIDI_CHANNELS],
     midi_sender: MidiSender,
     animator: Animator,
 }
@@ -28,24 +31,31 @@ pub struct Glider {
 impl Glider {
     pub fn new(midi_sender: MidiSender, animator: Animator) -> Self {
         Glider {
-            held_notes: Vec::new(),
+            held_by_channel: core::array::from_fn(|_| Vec::new()),
             midi_sender,
             animator,
         }
     }
 
     async fn handle_note_on(&mut self, channel: Channel, note: u8, velocity: u8) {
-        if let Some(pos) = self.held_notes.iter().position(|&n| n == note) {
-            self.held_notes.remove(pos);
-        }
-        let from_note = self.held_notes.last().cloned();
-        self.held_notes.push(note).unwrap();
-        held_notes::press(note);
+        let from_note = {
+            let held_notes = self.stack_mut(channel);
+            if let Some(pos) = held_notes.iter().position(|&n| n == note) {
+                held_notes.remove(pos);
+            }
+            let from_note = held_notes.last().cloned();
+            held_notes.push(note).unwrap();
+            from_note
+        };
+        state::edit_voice(channel, |voice| {
+            voice.held_notes.press(note);
+        })
+        .await;
 
         if let Some(from) = from_note {
             self.animator
                 .send(Cmd::Start(Modulator::Glide(Glide::new(
-                    channel, from, note, &glide::CONFIG,
+                    channel, from, note,
                 ))))
                 .await
                 .unwrap();
@@ -64,15 +74,26 @@ impl Glider {
     }
 
     async fn handle_note_off(&mut self, channel: Channel, note: u8, midi_msg: MidiMsg) {
-        let Some(pos) = self.held_notes.iter().position(|&n| n == note) else {
+        let Some((was_active, released_note, last_held)) = ({
+            let held_notes = self.stack_mut(channel);
+            let Some(pos) = held_notes.iter().position(|&n| n == note) else {
+                return;
+            };
+
+            let was_active = pos == held_notes.len() - 1;
+            let released_note = held_notes.remove(pos);
+            let last_held = held_notes.last().copied();
+            Some((was_active, released_note, last_held))
+        }) else {
             return;
         };
 
-        let was_active = pos == self.held_notes.len() - 1;
-        let released_note = self.held_notes.remove(pos);
-        held_notes::release(released_note);
+        state::edit_voice(channel, |voice| {
+            voice.held_notes.release(released_note);
+        })
+        .await;
 
-        if let Some(&last_held) = self.held_notes.last()
+        if let Some(last_held) = last_held
             && was_active
         {
             self.animator
@@ -80,7 +101,6 @@ impl Glider {
                     channel,
                     released_note,
                     last_held,
-                    &glide::CONFIG,
                 ))))
                 .await
                 .unwrap();
@@ -97,6 +117,10 @@ impl Glider {
             self.animator.send(Cmd::Stop).await.unwrap();
         }
     }
+
+    fn stack_mut(&mut self, channel: Channel) -> &mut HeldNoteStack {
+        &mut self.held_by_channel[channel as u8 as usize]
+    }
 }
 
 impl super::Consumer for Glider {
@@ -104,6 +128,10 @@ impl super::Consumer for Glider {
         let MidiMsg::ChannelVoice { channel, msg } = event.msg else {
             return Some(event);
         };
+
+        if !state::has_voice(channel).await {
+            return Some(event);
+        }
 
         match msg {
             NoteOn { note, velocity } => {

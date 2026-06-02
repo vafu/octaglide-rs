@@ -1,5 +1,3 @@
-use core::sync::atomic::Ordering::Relaxed;
-
 use embedded_graphics::{
     mono_font::{MonoTextStyle, ascii::FONT_5X8},
     pixelcolor::BinaryColor,
@@ -11,7 +9,7 @@ use rtic_monotonics::systick::{ExtU32, Systick};
 use sh1106::{Builder, mode::GraphicsMode};
 use teensy4_bsp::board;
 
-use crate::anim::modulators::envelope::CONFIGS;
+use crate::state::{self, EnvelopeState};
 
 pub async fn run_envelope_display(i2c: board::Lpi2c3) {
     Systick::delay(1000.millis()).await;
@@ -26,27 +24,28 @@ pub async fn run_envelope_display(i2c: board::Lpi2c3) {
     let line_style = PrimitiveStyle::with_stroke(BinaryColor::On, 1);
     let text_style = MonoTextStyle::new(&FONT_5X8, BinaryColor::On);
 
-    let mut last: (u32, u32, u8, u32, u8, u8, u8, u8) =
-        (u32::MAX, u32::MAX, 0, u32::MAX, 0, 0, 0, u8::MAX);
+    let mut last: Option<EnvelopeState> = None;
 
     loop {
-        let cfg = &CONFIGS[0];
-        let a_dur = cfg.attack.duration.load(Relaxed) as u32;
-        let d_dur = cfg.decay.duration.load(Relaxed) as u32;
-        let s_val = cfg.sustain.load(Relaxed) as f32 / 127.0;
-        let s_raw = cfg.sustain.load(Relaxed);
-        let r_dur = cfg.release.duration.load(Relaxed) as u32;
-        let a_crv = cfg.attack.curve.load(Relaxed);
-        let d_crv = cfg.decay.curve.load(Relaxed);
-        let r_crv = cfg.release.curve.load(Relaxed);
-        let mode = cfg.mode.load(Relaxed);
+        let Some(current) = state::read_selected_voice(|voice| voice.envelope).await else {
+            Systick::delay(16.millis()).await;
+            continue;
+        };
 
-        let current = (a_dur, d_dur, s_raw, r_dur, a_crv, d_crv, r_crv, mode);
-        if current == last {
+        if last == Some(current) {
             Systick::delay(16.millis()).await;
             continue;
         }
-        last = current;
+        last = Some(current);
+
+        let a_dur = current.attack.duration as u32;
+        let d_dur = current.decay.duration as u32;
+        let s_val = current.sustain as f32 / 127.0;
+        let r_dur = current.release.duration as u32;
+        let a_crv = current.attack.curve;
+        let d_crv = current.decay.curve;
+        let r_crv = current.release.curve;
+        let mode = current.mode;
 
         const S_HOLD: u32 = 20;
 

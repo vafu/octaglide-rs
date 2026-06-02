@@ -1,4 +1,7 @@
-use crate::{app::MidiSender, core::{MidiEvent, MidiOut}};
+use crate::{
+    app::MidiSender,
+    core::{MidiEvent, MidiOut},
+};
 
 #[derive(Debug)]
 pub struct Passthrough {
@@ -13,7 +16,13 @@ impl Passthrough {
 
 impl super::Consumer for Passthrough {
     async fn consume(&mut self, event: MidiEvent) -> Option<MidiEvent> {
-        self.midi_sender.send(MidiOut { msg: event.msg, tag: "pass" }).await.unwrap();
+        self.midi_sender
+            .send(MidiOut {
+                msg: event.msg,
+                tag: "pass",
+            })
+            .await
+            .unwrap();
         None
     }
 }

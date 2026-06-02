@@ -1,30 +1,13 @@
-use core::sync::atomic::{AtomicU32, Ordering::Relaxed};
-
 use heapless::Vec;
 use midi_msg::{Channel, ChannelVoiceMsg, MidiMsg};
+
+use crate::state;
 
 use super::{Messages, Modulation};
 
 const PITCHBEND_CENTER: f32 = 8192.0;
 const PITCHBEND_MAX: u16 = PITCHBEND_CENTER as u16 * 2;
-const DEFAULT_VELOCITY: u8 = 100;
-
-const SYNTH_BEND_RANGE_SEMITONES: f32 = 2.0;
-
-#[derive(Debug)]
-pub struct GlideConfig {
-    pub duration_ms: AtomicU32,
-}
-
-impl GlideConfig {
-    const fn default() -> Self {
-        Self {
-            duration_ms: AtomicU32::new(200),
-        }
-    }
-}
-
-pub static CONFIG: GlideConfig = GlideConfig::default();
+const FALLBACK_BEND_RANGE_SEMITONES: f32 = 1.0;
 
 #[derive(Debug)]
 pub struct Glide {
@@ -32,22 +15,20 @@ pub struct Glide {
     from: u8,
     to: u8,
     active_note: u8,
-    config: &'static GlideConfig,
 }
 
 impl Glide {
-    pub fn new(ch: Channel, from: u8, to: u8, config: &'static GlideConfig) -> Self {
+    pub fn new(ch: Channel, from: u8, to: u8) -> Self {
         Self {
             ch,
             from,
             to,
             active_note: from,
-            config,
         }
     }
 
-    fn calc_bend_msg(&self, semitones: f32) -> MidiMsg {
-        let bend_fraction = (semitones / SYNTH_BEND_RANGE_SEMITONES).clamp(-1.0, 1.0);
+    fn calc_bend_msg(&self, semitones: f32, bend_range_semitones: f32) -> MidiMsg {
+        let bend_fraction = (semitones / bend_range_semitones).clamp(-1.0, 1.0);
 
         let bend_value = (PITCHBEND_CENTER + bend_fraction * PITCHBEND_CENTER) as u16;
         let bend = bend_value.clamp(0, PITCHBEND_MAX);
@@ -60,15 +41,19 @@ impl Glide {
 }
 
 impl Modulation for Glide {
-    fn duration_ms(&self) -> u32 {
-        self.config.duration_ms.load(Relaxed)
+    async fn duration_ms(&self) -> u32 {
+        state::read_voice(self.ch, |voice| voice.glide.duration_ms)
+            .await
+            .unwrap_or(0)
     }
 
-    fn next_stage(&mut self) -> bool {
+    async fn next_stage(&mut self) -> bool {
         false
     }
 
-    fn animate(&mut self, progress: f32, _depth: f32, _offset: f32) -> Messages {
+    async fn animate(&mut self, progress: f32, _depth: f32, _offset: f32) -> Messages {
+        let glide = state::read_voice(self.ch, |voice| voice.glide).await?;
+        let bend_range = bend_range_semitones(glide.bend_range_semitones);
         let mut messages = Vec::<MidiMsg, 3>::new();
 
         if self.from == self.to {
@@ -83,14 +68,14 @@ impl Modulation for Glide {
 
         // Are we in range of the 'to' note? Prioritize it.
         let dest_ct = inter_note - self.to as f32;
-        if dest_ct.abs() <= SYNTH_BEND_RANGE_SEMITONES {
+        if dest_ct.abs() <= bend_range {
             new_active_note = self.to;
             req_ct = dest_ct;
         }
         // If not, are we still in range of the *current* note? Stick to it.
         else {
             let active_ct = inter_note - self.active_note as f32;
-            if active_ct.abs() <= SYNTH_BEND_RANGE_SEMITONES {
+            if active_ct.abs() <= bend_range {
                 new_active_note = self.active_note;
                 req_ct = active_ct;
             }
@@ -107,12 +92,16 @@ impl Modulation for Glide {
                 channel: self.ch,
                 msg: ChannelVoiceMsg::NoteOn {
                     note: new_active_note,
-                    velocity: DEFAULT_VELOCITY,
+                    velocity: glide.note_on_velocity,
                 },
             });
 
             // Send NoteOff for the previous note only if it's not user-held
-            if self.active_note != 0 && !crate::held_notes::is_held(self.active_note) {
+            let active_note_held =
+                state::read_voice(self.ch, |voice| voice.held_notes.is_held(self.active_note))
+                    .await
+                    .unwrap_or(false);
+            if self.active_note != 0 && !active_note_held {
                 let _ = messages.push(MidiMsg::ChannelVoice {
                     channel: self.ch,
                     msg: ChannelVoiceMsg::NoteOff {
@@ -125,16 +114,20 @@ impl Modulation for Glide {
             self.active_note = new_active_note;
         }
 
-        let _ = messages.push(self.calc_bend_msg(req_ct));
+        let _ = messages.push(self.calc_bend_msg(req_ct, bend_range));
 
         Some(messages)
     }
 
-    fn reset(&mut self) -> Messages {
+    async fn reset(&mut self) -> Messages {
         let mut messages = Vec::<MidiMsg, 3>::new();
 
         // Send NoteOff for the currently active note only if it's not user-held
-        if self.active_note != 0 && !crate::held_notes::is_held(self.active_note) {
+        let active_note_held =
+            state::read_voice(self.ch, |voice| voice.held_notes.is_held(self.active_note))
+                .await
+                .unwrap_or(false);
+        if self.active_note != 0 && !active_note_held {
             let _ = messages.push(MidiMsg::ChannelVoice {
                 channel: self.ch,
                 msg: ChannelVoiceMsg::NoteOff {
@@ -155,5 +148,13 @@ impl Modulation for Glide {
         });
 
         Some(messages)
+    }
+}
+
+fn bend_range_semitones(value: f32) -> f32 {
+    if value > 0.0 {
+        value
+    } else {
+        FALLBACK_BEND_RANGE_SEMITONES
     }
 }

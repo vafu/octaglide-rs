@@ -23,4 +23,3 @@ impl<'a> fmt::Display for MidiFmt<'a> {
         }
     }
 }
-

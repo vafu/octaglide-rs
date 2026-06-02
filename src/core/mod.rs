@@ -1,13 +1,12 @@
 mod consumers;
 mod transformers;
 
-use core::sync::atomic::Ordering::Relaxed;
 use log::info;
 use midi_msg::MidiMsg;
 
-use crate::anim::modulators::envelope::CONFIGS;
 use crate::core::{consumers::ModTrigger, transformers::Transformers};
 use crate::midi::MidiFmt;
+use crate::state;
 
 #[derive(Debug, Clone)]
 pub struct MidiEvent {
@@ -53,7 +52,10 @@ pub struct Core {
 #[derive(Debug)]
 pub enum Input {
     Process(MidiEvent),
-    AnalogUpdate { index: u8, value: u16 },
+    AnalogUpdate {
+        index: u8,
+        value: u16,
+    },
     /// Encoder rotated: +1 = CW, -1 = CCW.
     /// Generic — currently cycles envelope mode, will drive menus/params later.
     EncoderStep(i8),
@@ -110,31 +112,39 @@ impl Core {
             Input::AnalogUpdate { index, value } => {
                 // Map 10-bit ADC (0-1023) to 0-127
                 let param = (value >> 3) as u8;
-                let config = &CONFIGS[0];
-                match self.encoder_mode {
-                    EncoderMode::Time => match index {
-                        3 => config.attack.duration.store(param, Relaxed),
-                        2 => config.decay.duration.store(param, Relaxed),
-                        1 => config.sustain.store(param, Relaxed),
-                        0 => config.release.duration.store(param, Relaxed),
-                        _ => {}
-                    },
-                    EncoderMode::Curve => match index {
-                        3 => config.attack.curve.store(param, Relaxed),
-                        2 => config.decay.curve.store(param, Relaxed),
-                        1 => config.sustain.store(param, Relaxed), // sustain level, no curve concept
-                        0 => config.release.curve.store(param, Relaxed),
-                        _ => {}
-                    },
-                }
+                state::edit_selected_voice(|voice| {
+                    let envelope = &mut voice.envelope;
+                    match self.encoder_mode {
+                        EncoderMode::Time => match index {
+                            3 => envelope.attack.duration = param,
+                            2 => envelope.decay.duration = param,
+                            1 => envelope.sustain = param,
+                            0 => envelope.release.duration = param,
+                            _ => {}
+                        },
+                        EncoderMode::Curve => match index {
+                            3 => envelope.attack.curve = param,
+                            2 => envelope.decay.curve = param,
+                            1 => envelope.sustain = param, // sustain level, no curve concept
+                            0 => envelope.release.curve = param,
+                            _ => {}
+                        },
+                    }
+                })
+                .await;
             }
             Input::EncoderStep(delta) => {
                 // Cycle envelope mode: AD(0) → AR(1) → ADSR(2) → wrap
-                let config = &CONFIGS[0];
-                let current = config.mode.load(Relaxed) as i8;
-                let next = (current + delta).rem_euclid(3) as u8;
-                config.mode.store(next, Relaxed);
-                info!("Envelope mode → {}", next);
+                let next = state::edit_selected_voice(|voice| {
+                    let current = voice.envelope.mode as i8;
+                    let next = (current + delta).rem_euclid(3) as u8;
+                    voice.envelope.mode = next;
+                    next
+                })
+                .await;
+                if let Some(next) = next {
+                    info!("Envelope mode → {}", next);
+                }
             }
             Input::EncoderClick => {
                 self.encoder_mode = match self.encoder_mode {
