@@ -1,14 +1,13 @@
 mod consumers;
 mod transformers;
 
-use alloc::vec;
 use core::sync::atomic::Ordering::Relaxed;
 use log::info;
 use midi_msg::MidiMsg;
 
 use crate::anim::modulators::envelope::CONFIGS;
 use crate::core::{consumers::ModTrigger, transformers::Transformers};
-use crate::midi_fmt::MidiFmt;
+use crate::midi::MidiFmt;
 
 #[derive(Debug, Clone)]
 pub struct MidiEvent {

@@ -1,3 +1,5 @@
+mod fmt;
+
 use enum_dispatch::enum_dispatch;
 use heapless::Deque;
 use log::info;
@@ -7,9 +9,10 @@ use teensy4_bsp::{hal::lpuart::Status, ral};
 use crate::{
     app::{CoreSender, MidiUart},
     core::{Input as CoreIn, MidiEvent},
-    midi_fmt::MidiFmt,
-    usb_midi::UsbMidiBus,
+    usb::UsbMidiBus,
 };
+
+pub use fmt::MidiFmt;
 
 // TODO: consider changing midi BAUD (elektron Turbo), might need to update buf size.
 const MIDI_BUF_SIZE: usize = 32;
