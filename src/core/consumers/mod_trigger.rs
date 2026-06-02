@@ -1,12 +1,12 @@
-use midi_msg::{ChannelVoiceMsg, ControlChange, MidiMsg};
-
 use crate::{
     anim::{
         animator::Cmd,
         modulators::{Envelope, Modulator},
     },
     app::Animator,
+    core::event::{Event, EventPayload, EventRole, Events, control_to_u8},
     state,
+    state::{EnvelopeParam, ModifierParam},
 };
 
 #[derive(Debug)]
@@ -21,46 +21,53 @@ impl ModTrigger {
 }
 
 impl super::Consumer for ModTrigger {
-    async fn consume(&mut self, event: crate::core::MidiEvent) -> Option<crate::core::MidiEvent> {
-        let MidiMsg::ChannelVoice { channel, msg } = event.msg else {
-            return Some(event);
-        };
-
-        match msg {
-            ChannelVoiceMsg::NoteOn { .. } => {
-                if !state::has_voice(channel).await {
-                    return Some(event);
-                }
-                self.animator
-                    .send(Cmd::Start(Modulator::Envelope(Envelope::new(channel, 2))))
-                    .await
-                    .unwrap();
-                Some(event)
-            }
-            ChannelVoiceMsg::ControlChange {
-                control: ControlChange::CC { control, value },
+    async fn consume(&mut self, event: Event, out: &mut Events) {
+        match event {
+            Event {
+                role: EventRole::Voice(voice),
+                payload: EventPayload::NoteOn { .. },
             } => {
-                let consumed = state::edit_voice(channel, |voice| {
-                    let envelope = &mut voice.envelope;
-                    match control {
-                        // Temporary: route CC edits to the incoming event channel's voice.
-                        1 => envelope.attack.duration = value,
-                        2 => envelope.decay.duration = value,
-                        3 => envelope.release.duration = value,
-                        4 => envelope.sustain = value,
-                        5 => envelope.mode = value.min(2),
-                        _ => return false,
-                    }
-                    true
-                })
-                .await
-                .unwrap_or(false);
-                if !consumed {
-                    return Some(event);
-                }
-                None
+                self.animator
+                    .send(Cmd::Start(Modulator::Envelope(Envelope::new(voice, 2))))
+                    .await
+                    .ok();
+                out.push(event).ok();
             }
-            _ => Some(event),
+            Event {
+                role:
+                    EventRole::Modifier {
+                        voice,
+                        param: ModifierParam::Envelope(param),
+                    },
+                payload,
+            } => {
+                state::edit_voice(voice, |voice| match payload {
+                    EventPayload::Control(value) => {
+                        let value = control_to_u8(value, 0, 127);
+                        match param {
+                            EnvelopeParam::AttackDuration => voice.envelope.attack.duration = value,
+                            EnvelopeParam::AttackCurve => voice.envelope.attack.curve = value,
+                            EnvelopeParam::DecayDuration => voice.envelope.decay.duration = value,
+                            EnvelopeParam::DecayCurve => voice.envelope.decay.curve = value,
+                            EnvelopeParam::Sustain => voice.envelope.sustain = value,
+                            EnvelopeParam::ReleaseDuration => {
+                                voice.envelope.release.duration = value
+                            }
+                            EnvelopeParam::ReleaseCurve => voice.envelope.release.curve = value,
+                            EnvelopeParam::Mode => voice.envelope.mode = value.min(2),
+                        }
+                    }
+                    EventPayload::Delta(delta) if param == EnvelopeParam::Mode => {
+                        let current = voice.envelope.mode as i16;
+                        voice.envelope.mode = (current + delta).rem_euclid(3) as u8;
+                    }
+                    _ => {}
+                })
+                .await;
+            }
+            _ => {
+                out.push(event).ok();
+            }
         }
     }
 }

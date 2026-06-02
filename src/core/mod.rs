@@ -1,23 +1,14 @@
 mod consumers;
-mod transformers;
+pub mod event;
+mod routing;
 
 use log::info;
-use midi_msg::MidiMsg;
+use midi_msg::{ChannelVoiceMsg, MidiMsg};
 
-use crate::core::{consumers::ModTrigger, transformers::Transformers};
 use crate::midi::MidiFmt;
-use crate::state;
+use crate::state::{self, EnvelopeParam, ModifierParam};
 
-#[derive(Debug, Clone)]
-pub struct MidiEvent {
-    pub msg: MidiMsg,
-}
-
-impl MidiEvent {
-    pub fn from_user(msg: MidiMsg) -> Self {
-        Self { msg }
-    }
-}
+use self::routing::RoutedMidi;
 
 #[derive(Debug)]
 pub struct MidiOut {
@@ -28,8 +19,8 @@ pub struct MidiOut {
 use crate::{
     app::{Animator, MidiSender},
     core::{
-        consumers::{Consumer, Consumers, Glider, Passthrough},
-        transformers::{MidiTransformer, OctaveShifter},
+        consumers::{Consumer, Consumers, Glider, ModTrigger, Octave, Passthrough},
+        event::{Event, EventPayload, EventRole, Events, HardwareControl},
     },
 };
 use heapless::Vec;
@@ -44,23 +35,18 @@ enum EncoderMode {
 }
 
 pub struct Core {
-    transformers: Vec<Transformers, 8>,
     consumers: Vec<Consumers, 8>,
+    midi_sender: MidiSender,
     encoder_mode: EncoderMode,
 }
 
 #[derive(Debug)]
 pub enum Input {
-    Process(MidiEvent),
-    AnalogUpdate {
-        index: u8,
-        value: u16,
+    Midi(MidiMsg),
+    Hardware {
+        control: HardwareControl,
+        payload: EventPayload,
     },
-    /// Encoder rotated: +1 = CW, -1 = CCW.
-    /// Generic — currently cycles envelope mode, will drive menus/params later.
-    EncoderStep(i8),
-    /// Encoder push-button clicked.
-    EncoderClick,
 }
 
 macro_rules! vec {
@@ -77,96 +63,106 @@ impl Core {
         glide_animator: Animator,
         envelope_animator: Animator,
     ) -> Self {
-        let transformers = vec![Transformers::OctaveShifter(OctaveShifter::new())];
         let consumers = vec![
+            Consumers::Octave(Octave::new()),
+            Consumers::Glider(Glider::new(glide_animator)),
             Consumers::ModTrigger(ModTrigger::new(envelope_animator)),
-            Consumers::Glider(Glider::new(midi_sender.clone(), glide_animator)),
-            Consumers::Passthrough(Passthrough::new(midi_sender)),
+            Consumers::Passthrough(Passthrough::new(midi_sender.clone())),
         ];
 
         Core {
-            transformers,
             consumers,
+            midi_sender,
             encoder_mode: EncoderMode::Time,
         }
     }
 
     pub async fn process(&mut self, input: Input) {
         match input {
-            Input::Process(mut event) => {
-                for transformer in &mut self.transformers {
-                    let processed = transformer.process(event.msg);
-                    let Some(m) = processed else { return };
-                    event.msg = m;
+            Input::Midi(msg) => match routing::route_midi(msg).await {
+                RoutedMidi::Event(event) => {
+                    self.dispatch_event(event).await;
                 }
-
-                log_event(&event);
-
-                // Process through consumer chain
-                let mut event = Some(event);
-                for consumer in &mut self.consumers {
-                    let Some(e) = event else { break };
-                    event = consumer.consume(e).await;
-                }
-            }
-            Input::AnalogUpdate { index, value } => {
-                // Map 10-bit ADC (0-1023) to 0-127
-                let param = (value >> 3) as u8;
-                state::edit_selected_voice(|voice| {
-                    let envelope = &mut voice.envelope;
-                    match self.encoder_mode {
-                        EncoderMode::Time => match index {
-                            3 => envelope.attack.duration = param,
-                            2 => envelope.decay.duration = param,
-                            1 => envelope.sustain = param,
-                            0 => envelope.release.duration = param,
-                            _ => {}
-                        },
-                        EncoderMode::Curve => match index {
-                            3 => envelope.attack.curve = param,
-                            2 => envelope.decay.curve = param,
-                            1 => envelope.sustain = param, // sustain level, no curve concept
-                            0 => envelope.release.curve = param,
-                            _ => {}
-                        },
-                    }
-                })
-                .await;
-            }
-            Input::EncoderStep(delta) => {
-                // Cycle envelope mode: AD(0) → AR(1) → ADSR(2) → wrap
-                let next = state::edit_selected_voice(|voice| {
-                    let current = voice.envelope.mode as i8;
-                    let next = (current + delta).rem_euclid(3) as u8;
-                    voice.envelope.mode = next;
-                    next
-                })
-                .await;
-                if let Some(next) = next {
-                    info!("Envelope mode → {}", next);
-                }
-            }
-            Input::EncoderClick => {
-                self.encoder_mode = match self.encoder_mode {
-                    EncoderMode::Time => EncoderMode::Curve,
-                    EncoderMode::Curve => EncoderMode::Time,
-                };
-                info!("Encoder mode → {:?}", self.encoder_mode);
+                RoutedMidi::Passthrough(msg) => self.send_raw(msg, "raw").await,
+                RoutedMidi::Drop => {}
+            },
+            Input::Hardware { control, payload } => {
+                self.process_hardware(control, payload).await;
             }
         }
     }
+
+    async fn process_hardware(&mut self, control: HardwareControl, payload: EventPayload) {
+        if control == HardwareControl::EncoderClick {
+            self.encoder_mode = match self.encoder_mode {
+                EncoderMode::Time => EncoderMode::Curve,
+                EncoderMode::Curve => EncoderMode::Time,
+            };
+            info!("Encoder mode → {:?}", self.encoder_mode);
+            return;
+        }
+
+        let Some(param) = self.hardware_param(control) else {
+            return;
+        };
+        let voice = state::selected_voice().await;
+
+        self.dispatch_event(Event {
+            role: EventRole::Modifier { voice, param },
+            payload,
+        })
+        .await;
+    }
+
+    fn hardware_param(&self, control: HardwareControl) -> Option<ModifierParam> {
+        let param = match (self.encoder_mode, control) {
+            (EncoderMode::Time, HardwareControl::Slider3) => EnvelopeParam::AttackDuration,
+            (EncoderMode::Time, HardwareControl::Slider2) => EnvelopeParam::DecayDuration,
+            (EncoderMode::Time, HardwareControl::Slider1) => EnvelopeParam::Sustain,
+            (EncoderMode::Time, HardwareControl::Slider0) => EnvelopeParam::ReleaseDuration,
+            (EncoderMode::Curve, HardwareControl::Slider3) => EnvelopeParam::AttackCurve,
+            (EncoderMode::Curve, HardwareControl::Slider2) => EnvelopeParam::DecayCurve,
+            (EncoderMode::Curve, HardwareControl::Slider1) => EnvelopeParam::Sustain,
+            (EncoderMode::Curve, HardwareControl::Slider0) => EnvelopeParam::ReleaseCurve,
+            (_, HardwareControl::Encoder) => EnvelopeParam::Mode,
+            _ => return None,
+        };
+
+        Some(ModifierParam::Envelope(param))
+    }
+
+    async fn dispatch_event(&mut self, event: Event) {
+        let mut current = Events::new();
+        current.push(event).ok();
+
+        for consumer in &mut self.consumers {
+            if current.is_empty() {
+                break;
+            }
+
+            let mut next = Events::new();
+            for event in current {
+                consumer.consume(event, &mut next).await;
+            }
+            current = next;
+        }
+    }
+
+    async fn send_raw(&mut self, msg: MidiMsg, tag: &'static str) {
+        log_msg("<<<", &msg);
+        self.midi_sender.send(MidiOut { msg, tag }).await.ok();
+    }
 }
 
-fn log_event(event: &MidiEvent) {
-    // Format and log event
+fn log_msg(prefix: &str, msg: &MidiMsg) {
     // Skip logging PitchBend to avoid noise
     if !matches!(
-        event.msg,
+        msg,
         MidiMsg::ChannelVoice {
-            msg: midi_msg::ChannelVoiceMsg::PitchBend { .. },
+            msg: ChannelVoiceMsg::PitchBend { .. },
             ..
         }
     ) {
-        info!("<<< {}", MidiFmt(&event.msg));
+        info!("{} {}", prefix, MidiFmt(msg));
     }
 }

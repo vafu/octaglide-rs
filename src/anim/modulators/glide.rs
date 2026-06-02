@@ -1,7 +1,7 @@
 use heapless::Vec;
 use midi_msg::{Channel, ChannelVoiceMsg, MidiMsg};
 
-use crate::state;
+use crate::state::{self, VoiceId};
 
 use super::{Messages, Modulation};
 
@@ -11,30 +11,35 @@ const FALLBACK_BEND_RANGE_SEMITONES: f32 = 1.0;
 
 #[derive(Debug)]
 pub struct Glide {
-    ch: Channel,
+    voice: VoiceId,
     from: u8,
     to: u8,
     active_note: u8,
 }
 
 impl Glide {
-    pub fn new(ch: Channel, from: u8, to: u8) -> Self {
+    pub fn new(voice: VoiceId, from: u8, to: u8) -> Self {
         Self {
-            ch,
+            voice,
             from,
             to,
             active_note: from,
         }
     }
 
-    fn calc_bend_msg(&self, semitones: f32, bend_range_semitones: f32) -> MidiMsg {
+    fn calc_bend_msg(
+        &self,
+        channel: Channel,
+        semitones: f32,
+        bend_range_semitones: f32,
+    ) -> MidiMsg {
         let bend_fraction = (semitones / bend_range_semitones).clamp(-1.0, 1.0);
 
         let bend_value = (PITCHBEND_CENTER + bend_fraction * PITCHBEND_CENTER) as u16;
         let bend = bend_value.clamp(0, PITCHBEND_MAX);
 
         MidiMsg::ChannelVoice {
-            channel: self.ch,
+            channel,
             msg: ChannelVoiceMsg::PitchBend { bend },
         }
     }
@@ -42,7 +47,7 @@ impl Glide {
 
 impl Modulation for Glide {
     async fn duration_ms(&self) -> u32 {
-        state::read_voice(self.ch, |voice| voice.glide.duration_ms)
+        state::read_voice(self.voice, |voice| voice.glide.duration_ms)
             .await
             .unwrap_or(0)
     }
@@ -52,7 +57,8 @@ impl Modulation for Glide {
     }
 
     async fn animate(&mut self, progress: f32, _depth: f32, _offset: f32) -> Messages {
-        let glide = state::read_voice(self.ch, |voice| voice.glide).await?;
+        let (channel, glide) =
+            state::read_voice(self.voice, |voice| (voice.output_channel, voice.glide)).await?;
         let bend_range = bend_range_semitones(glide.bend_range_semitones);
         let mut messages = Vec::<MidiMsg, 3>::new();
 
@@ -89,7 +95,7 @@ impl Modulation for Glide {
         if new_active_note != self.active_note {
             // Send NoteOn for the new active note (including destination)
             let _ = messages.push(MidiMsg::ChannelVoice {
-                channel: self.ch,
+                channel,
                 msg: ChannelVoiceMsg::NoteOn {
                     note: new_active_note,
                     velocity: glide.note_on_velocity,
@@ -97,13 +103,14 @@ impl Modulation for Glide {
             });
 
             // Send NoteOff for the previous note only if it's not user-held
-            let active_note_held =
-                state::read_voice(self.ch, |voice| voice.held_notes.is_held(self.active_note))
-                    .await
-                    .unwrap_or(false);
+            let active_note_held = state::read_voice(self.voice, |voice| {
+                voice.held_notes.is_held(self.active_note)
+            })
+            .await
+            .unwrap_or(false);
             if self.active_note != 0 && !active_note_held {
                 let _ = messages.push(MidiMsg::ChannelVoice {
-                    channel: self.ch,
+                    channel,
                     msg: ChannelVoiceMsg::NoteOff {
                         note: self.active_note,
                         velocity: 0,
@@ -114,22 +121,24 @@ impl Modulation for Glide {
             self.active_note = new_active_note;
         }
 
-        let _ = messages.push(self.calc_bend_msg(req_ct, bend_range));
+        let _ = messages.push(self.calc_bend_msg(channel, req_ct, bend_range));
 
         Some(messages)
     }
 
     async fn reset(&mut self) -> Messages {
+        let channel = state::read_voice(self.voice, |voice| voice.output_channel).await?;
         let mut messages = Vec::<MidiMsg, 3>::new();
 
         // Send NoteOff for the currently active note only if it's not user-held
-        let active_note_held =
-            state::read_voice(self.ch, |voice| voice.held_notes.is_held(self.active_note))
-                .await
-                .unwrap_or(false);
+        let active_note_held = state::read_voice(self.voice, |voice| {
+            voice.held_notes.is_held(self.active_note)
+        })
+        .await
+        .unwrap_or(false);
         if self.active_note != 0 && !active_note_held {
             let _ = messages.push(MidiMsg::ChannelVoice {
-                channel: self.ch,
+                channel,
                 msg: ChannelVoiceMsg::NoteOff {
                     note: self.active_note,
                     velocity: 0,
@@ -141,7 +150,7 @@ impl Modulation for Glide {
 
         // Reset pitch bend to center
         let _ = messages.push(MidiMsg::ChannelVoice {
-            channel: self.ch,
+            channel,
             msg: ChannelVoiceMsg::PitchBend {
                 bend: PITCHBEND_CENTER as u16,
             },

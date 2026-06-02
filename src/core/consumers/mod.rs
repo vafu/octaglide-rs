@@ -1,15 +1,14 @@
-use crate::core::MidiEvent;
+use crate::core::event::{Event, Events};
 use enum_dispatch::enum_dispatch;
 
 #[enum_dispatch]
 pub trait Consumer {
-    /// Consume a MIDI event
-    ///
-    /// Returns:
-    /// - `Some(event)` - event ignored, pass to next consumer
-    /// - `None` - event consumed, stop chain
-    async fn consume(&mut self, event: MidiEvent) -> Option<MidiEvent>;
+    /// Consume, transform, or fan out an event.
+    async fn consume(&mut self, event: Event, out: &mut Events);
 }
+
+pub mod octave;
+pub use self::octave::Octave;
 
 pub mod glider;
 pub use self::glider::Glider;
@@ -24,6 +23,7 @@ pub use self::mod_trigger::ModTrigger;
 #[enum_dispatch(Consumer)]
 #[derive(Debug)]
 pub enum Consumers {
+    Octave,
     ModTrigger,
     Glider,
     Passthrough,

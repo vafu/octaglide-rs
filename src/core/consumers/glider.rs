@@ -1,150 +1,160 @@
-use heapless::Vec;
 use log::info;
-use midi_msg::{
-    Channel,
-    ChannelVoiceMsg::{self, *},
-    MidiMsg,
-};
 
 use crate::{
     anim::{
         animator::Cmd,
         modulators::{Glide, Modulator},
     },
-    app::{Animator, MidiSender},
-    core::{MidiEvent, MidiOut},
-    state,
+    app::Animator,
+    core::event::{Event, EventPayload, EventRole, Events, control_to_u8, control_to_u32},
+    state::{self, GlideParam, ModifierParam},
 };
-
-const MAX_HELD_NOTES: usize = 8;
-const MIDI_CHANNELS: usize = 16;
-
-type HeldNoteStack = Vec<u8, MAX_HELD_NOTES>;
 
 #[derive(Debug)]
 pub struct Glider {
-    held_by_channel: [HeldNoteStack; MIDI_CHANNELS],
-    midi_sender: MidiSender,
     animator: Animator,
 }
 
 impl Glider {
-    pub fn new(midi_sender: MidiSender, animator: Animator) -> Self {
-        Glider {
-            held_by_channel: core::array::from_fn(|_| Vec::new()),
-            midi_sender,
-            animator,
-        }
+    pub fn new(animator: Animator) -> Self {
+        Glider { animator }
     }
 
-    async fn handle_note_on(&mut self, channel: Channel, note: u8, velocity: u8) {
-        let from_note = {
-            let held_notes = self.stack_mut(channel);
-            if let Some(pos) = held_notes.iter().position(|&n| n == note) {
-                held_notes.remove(pos);
-            }
-            let from_note = held_notes.last().cloned();
-            held_notes.push(note).unwrap();
-            from_note
-        };
-        state::edit_voice(channel, |voice| {
-            voice.held_notes.press(note);
-        })
-        .await;
-
-        if let Some(from) = from_note {
-            self.animator
-                .send(Cmd::Start(Modulator::Glide(Glide::new(
-                    channel, from, note,
-                ))))
-                .await
-                .unwrap();
-        } else {
-            self.midi_sender
-                .send(MidiOut {
-                    msg: MidiMsg::ChannelVoice {
-                        channel,
-                        msg: ChannelVoiceMsg::NoteOn { note, velocity },
-                    },
-                    tag: "glider",
-                })
-                .await
-                .unwrap();
-        }
-    }
-
-    async fn handle_note_off(&mut self, channel: Channel, note: u8, midi_msg: MidiMsg) {
-        let Some((was_active, released_note, last_held)) = ({
-            let held_notes = self.stack_mut(channel);
-            let Some(pos) = held_notes.iter().position(|&n| n == note) else {
-                return;
-            };
-
-            let was_active = pos == held_notes.len() - 1;
-            let released_note = held_notes.remove(pos);
-            let last_held = held_notes.last().copied();
-            Some((was_active, released_note, last_held))
-        }) else {
+    async fn handle_note_on(&mut self, event: Event, out: &mut Events, note: u8) {
+        let EventRole::Voice(voice) = event.role else {
+            out.push(event).ok();
             return;
         };
 
-        state::edit_voice(channel, |voice| {
-            voice.held_notes.release(released_note);
+        let Some((enabled, transition)) = state::edit_voice(voice, |voice| {
+            (voice.glide.enabled, voice.held_notes.press(note))
         })
-        .await;
+        .await
+        else {
+            out.push(event).ok();
+            return;
+        };
 
-        if let Some(last_held) = last_held
-            && was_active
-        {
+        if !enabled {
+            out.push(event).ok();
+            return;
+        }
+
+        if let Some(from) = transition.previous_top {
             self.animator
-                .send(Cmd::Start(Modulator::Glide(Glide::new(
-                    channel,
-                    released_note,
-                    last_held,
-                ))))
+                .send(Cmd::Start(Modulator::Glide(Glide::new(voice, from, note))))
                 .await
-                .unwrap();
-            info!("sliding from {} back to {}", released_note, last_held);
+                .ok();
         } else {
-            info!("canceling anim");
-            self.midi_sender
-                .send(MidiOut {
-                    msg: midi_msg,
-                    tag: "glider",
-                })
-                .await
-                .unwrap();
-            self.animator.send(Cmd::Stop).await.unwrap();
+            out.push(event).ok();
         }
     }
 
-    fn stack_mut(&mut self, channel: Channel) -> &mut HeldNoteStack {
-        &mut self.held_by_channel[channel as u8 as usize]
+    async fn handle_note_off(&mut self, event: Event, out: &mut Events, note: u8) {
+        let EventRole::Voice(voice) = event.role else {
+            out.push(event).ok();
+            return;
+        };
+
+        let Some((enabled, release)) = state::edit_voice(voice, |voice| {
+            (voice.glide.enabled, voice.held_notes.release(note))
+        })
+        .await
+        else {
+            out.push(event).ok();
+            return;
+        };
+
+        if !enabled {
+            out.push(event).ok();
+            return;
+        }
+
+        if let Some(release) = release
+            && release.was_top
+            && let Some(last_held) = release.new_top
+        {
+            self.animator
+                .send(Cmd::Start(Modulator::Glide(Glide::new(
+                    voice, note, last_held,
+                ))))
+                .await
+                .ok();
+            info!("sliding from {} back to {}", note, last_held);
+        } else {
+            info!("canceling anim");
+            self.animator.send(Cmd::Stop).await.ok();
+            out.push(event).ok();
+        }
     }
 }
 
 impl super::Consumer for Glider {
-    async fn consume(&mut self, event: MidiEvent) -> Option<MidiEvent> {
-        let MidiMsg::ChannelVoice { channel, msg } = event.msg else {
-            return Some(event);
-        };
-
-        if !state::has_voice(channel).await {
-            return Some(event);
-        }
-
-        match msg {
-            NoteOn { note, velocity } => {
-                self.handle_note_on(channel, note, velocity).await;
-                None
+    async fn consume(&mut self, event: Event, out: &mut Events) {
+        match event {
+            Event {
+                role:
+                    EventRole::Modifier {
+                        voice,
+                        param: ModifierParam::Glide(param),
+                    },
+                payload,
+            } => {
+                state::edit_voice(voice, |voice| match payload {
+                    EventPayload::Control(value) => match param {
+                        GlideParam::Enabled => voice.glide.enabled = value >= u16::MAX / 2,
+                        GlideParam::Duration => {
+                            voice.glide.duration_ms = control_to_u32(value, 0, 4000);
+                        }
+                        GlideParam::BendRange => {
+                            voice.glide.bend_range_semitones = control_to_u32(value, 1, 24) as f32;
+                        }
+                        GlideParam::NoteOnVelocity => {
+                            voice.glide.note_on_velocity = control_to_u8(value, 1, 127);
+                        }
+                    },
+                    EventPayload::Delta(delta) => match param {
+                        GlideParam::Enabled => {
+                            if delta != 0 {
+                                voice.glide.enabled = !voice.glide.enabled;
+                            }
+                        }
+                        GlideParam::Duration => {
+                            let current = voice.glide.duration_ms as i32;
+                            voice.glide.duration_ms =
+                                (current + delta as i32 * 10).clamp(0, 4000) as u32;
+                        }
+                        GlideParam::BendRange => {
+                            let current = voice.glide.bend_range_semitones as i32;
+                            voice.glide.bend_range_semitones =
+                                (current + delta as i32).clamp(1, 24) as f32;
+                        }
+                        GlideParam::NoteOnVelocity => {
+                            let current = voice.glide.note_on_velocity as i16;
+                            voice.glide.note_on_velocity = (current + delta).clamp(1, 127) as u8;
+                        }
+                    },
+                    _ => {}
+                })
+                .await;
             }
-
-            NoteOff { note, .. } => {
-                self.handle_note_off(channel, note, event.msg).await;
-                None
+            event @ Event {
+                role: EventRole::Voice(_),
+                payload: EventPayload::NoteOn { note, .. },
+                ..
+            } => {
+                self.handle_note_on(event, out, note).await;
             }
-
-            _ => Some(event),
+            event @ Event {
+                role: EventRole::Voice(_),
+                payload: EventPayload::NoteOff { note, .. },
+                ..
+            } => {
+                self.handle_note_off(event, out, note).await;
+            }
+            _ => {
+                out.push(event).ok();
+            }
         }
     }
 }

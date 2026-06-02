@@ -8,7 +8,7 @@ use teensy4_bsp::{hal::lpuart::Status, ral};
 
 use crate::{
     app::{CoreSender, MidiUart},
-    core::{Input as CoreIn, MidiEvent},
+    core::Input as CoreIn,
     usb::UsbMidiBus,
 };
 
@@ -74,7 +74,7 @@ impl UartMidiBus {
 
                 match MidiMsg::from_midi_with_context(slice, &mut self.rx_ctx) {
                     Ok((msg, len)) => {
-                        let input = CoreIn::Process(MidiEvent::from_user(msg));
+                        let input = CoreIn::Midi(msg);
                         if let Err(e) = self.core_sender.try_send(input) {
                             log::error!("[MidiBus:CoreIn] {:?}", e);
                         }
