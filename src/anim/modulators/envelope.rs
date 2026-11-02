@@ -1,10 +1,10 @@
 use heapless::Vec;
-use libm::powf;
 use midi_msg::{Channel, ChannelVoiceMsg, ControlChange, MidiMsg};
 
 use crate::{
     anim::modulators::Modulation,
-    state::{self, EnvelopeStageState, EnvelopeState, VoiceId},
+    core::{EnvelopeStageState, EnvelopeState, VoiceId},
+    notes,
 };
 
 const CC_TO_MS: u32 = 16;
@@ -16,7 +16,7 @@ const CC_TO_MS: u32 = 16;
 pub enum Level {
     Zero,
     Full,
-    Sustain, // resolved at runtime from Voice envelope state
+    Sustain, // resolved from this animation's current settings
 }
 
 // ── StageKind ─────────────────────────────────────────────────────────────────
@@ -144,14 +144,18 @@ pub mod mode {
 #[derive(Debug)]
 pub struct Envelope {
     voice: VoiceId,
+    channel: Channel,
+    settings: EnvelopeState,
     cc: u8,
     stage_idx: usize,
 }
 
 impl Envelope {
-    pub fn new(voice: VoiceId, cc: u8) -> Self {
+    pub fn new(voice: VoiceId, channel: Channel, cc: u8, settings: EnvelopeState) -> Self {
         Self {
             voice,
+            channel,
+            settings,
             cc,
             stage_idx: 0,
         }
@@ -200,14 +204,22 @@ impl Envelope {
 }
 
 impl Modulation for Envelope {
+    fn update(&mut self, settings: &crate::anim::Settings) {
+        if let crate::anim::Settings::Envelope(settings) = settings {
+            // A mode switch may select a shorter stage sequence. Retain the
+            // current stage when valid and restart the sequence index otherwise.
+            self.settings = *settings;
+            if self.stage_idx >= mode::sequence(settings.mode).len() {
+                self.stage_idx = 0;
+            }
+        }
+    }
+
     async fn duration_ms(&self) -> u32 {
-        let Some((envelope, any_held)) = state::read_voice(self.voice, |voice| {
-            (voice.envelope, voice.held_notes.any_held())
-        })
-        .await
-        else {
-            return 0;
-        };
+        let envelope = self.settings;
+        let any_held = notes::read_notes(self.voice, |notes| notes.any_held())
+            .await
+            .unwrap_or(false);
 
         if self.current_desc(&envelope).kind == StageKind::Hold {
             return if any_held { u32::MAX } else { 0 };
@@ -218,10 +230,7 @@ impl Modulation for Envelope {
     }
 
     async fn next_stage(&mut self) -> bool {
-        let Some(envelope) = state::read_voice(self.voice, |voice| voice.envelope).await else {
-            self.stage_idx = 0;
-            return false;
-        };
+        let envelope = self.settings;
 
         self.stage_idx += 1;
         let done = self.stage_idx >= self.sequence(&envelope).len();
@@ -232,8 +241,7 @@ impl Modulation for Envelope {
     }
 
     async fn animate(&mut self, progress: f32, _depth: f32, _offset: f32) -> super::Messages {
-        let (channel, envelope) =
-            state::read_voice(self.voice, |voice| (voice.output_channel, voice.envelope)).await?;
+        let (channel, envelope) = (self.channel, self.settings);
 
         let StageKind::Ramp { from, to } = self.current_desc(&envelope).kind else {
             return None; // Hold stage: stay silent
@@ -242,12 +250,12 @@ impl Modulation for Envelope {
         let params = self
             .current_params(&envelope)
             .expect("Ramp stage must have params");
-        let curve_exp = powf(2.0, (params.curve as f32 - 64.0) / 32.0);
-        let p = powf(progress, curve_exp);
-
-        let value = ((self.resolve(&envelope, from)
-            + p * (self.resolve(&envelope, to) - self.resolve(&envelope, from)))
-            * 127.0) as u8;
+        let value = (super::envelope_level(
+            progress,
+            params.curve,
+            self.resolve(&envelope, from),
+            self.resolve(&envelope, to),
+        ) * 127.0) as u8;
 
         let mut messages = Vec::<MidiMsg, 3>::new();
         messages.push(self.make_cc(channel, value)).ok();
@@ -255,7 +263,7 @@ impl Modulation for Envelope {
     }
 
     async fn reset(&mut self) -> super::Messages {
-        let channel = state::read_voice(self.voice, |voice| voice.output_channel).await?;
+        let channel = self.channel;
         self.stage_idx = 0;
         let mut messages = Vec::<MidiMsg, 3>::new();
         messages.push(self.make_cc(channel, 0)).ok();

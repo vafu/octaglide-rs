@@ -13,7 +13,7 @@ impl UsbMidiBus {
 
 impl MidiBus for UsbMidiBus {
     fn poll(&mut self) {
-        // TODO: Add RX handling when needed (future work)
+        // TODO(octaglide-task-33): implement USB MIDI RX handling.
         panic!("USB Midi Reading is unsupported yet!")
     }
 

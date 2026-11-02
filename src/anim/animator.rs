@@ -9,13 +9,7 @@ use rtic_sync::channel::Receiver;
 
 use crate::anim::modulators::{Messages, Modulator};
 
-use super::modulators::Modulation;
-
-#[derive(Debug)]
-pub enum Cmd {
-    Start(Modulator),
-    Stop,
-}
+use super::{Cmd, modulators::Modulation};
 
 #[derive(Debug)]
 pub struct AnimationEngine {
@@ -160,6 +154,12 @@ impl AnimationEngine {
                 }
 
                 self.dedupe_messages(Some(messages))
+            }
+            Cmd::Update(settings) => {
+                if let Some(modulator) = self.modulator.as_mut() {
+                    modulator.update(&settings);
+                }
+                None
             }
             Cmd::Stop => {
                 let messages = match self.state {

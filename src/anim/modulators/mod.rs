@@ -4,11 +4,18 @@ use enum_dispatch::enum_dispatch;
 use heapless::Vec;
 use midi_msg::MidiMsg;
 
-// TODO: create a macro with vararg of messages.
+mod curve;
+
+/// Shared envelope shape calculation for playback and display previews.
+pub use curve::envelope_level;
+
+// TODO(octaglide-task-31): create a macro with vararg of messages.
 pub type Messages = Option<Vec<MidiMsg, 3>>;
 
 #[enum_dispatch]
 pub trait Modulation {
+    /// Apply new parameters while retaining animation progress.
+    fn update(&mut self, settings: &super::Settings);
     async fn duration_ms(&self) -> u32;
     async fn animate(&mut self, progress: f32, depth: f32, offset: f32) -> Messages;
     async fn reset(&mut self) -> Messages;

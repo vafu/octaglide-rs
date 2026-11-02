@@ -2,13 +2,13 @@
 //!
 //! These callbacks must be defined in the main application because:
 //! - rust_log_info: Needs access to the logger initialized in main.rs
-//! - rust_micros: TODO task-24 - Should be in teensy-usbhost but callback indirection breaks USB
+//! - rust_micros: TODO(octaglide-task-24): Should be in teensy-usbhost but callback indirection breaks USB
 
 use rtic_monotonics::{Monotonic, systick::Systick};
 
 /// C++ callback for microsecond timer
 ///
-/// TODO: task-24 - Move this to teensy-usbhost crate once callback issue is fixed
+/// TODO(octaglide-task-24): Move this to teensy-usbhost crate once callback issue is fixed
 #[unsafe(no_mangle)]
 pub extern "C" fn rust_micros() -> u32 {
     Systick::now().duration_since_epoch().to_micros()

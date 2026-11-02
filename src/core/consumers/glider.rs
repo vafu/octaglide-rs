@@ -1,160 +1,158 @@
 use log::info;
+use midi_msg::{Channel, ChannelVoiceMsg, MidiMsg};
 
 use crate::{
     anim::{
-        animator::Cmd,
+        Cmd, Settings,
         modulators::{Glide, Modulator},
     },
     app::Animator,
-    core::event::{Event, EventPayload, EventRole, Events, control_to_u8, control_to_u32},
-    state::{self, GlideParam, ModifierParam},
+    core::{GlideState, Input, OutputEvents, VoiceId, control_to_u8, control_to_u32},
+    notes,
 };
 
 #[derive(Debug)]
 pub struct Glider {
+    voice_id: VoiceId,
+    output_channel: Channel,
     animator: Animator,
+    settings: GlideState,
+    ui_dirty: bool,
 }
 
 impl Glider {
-    pub fn new(animator: Animator) -> Self {
-        Glider { animator }
+    pub fn new(voice_id: VoiceId, output_channel: Channel, animator: Animator) -> Self {
+        Self {
+            ui_dirty: true,
+            voice_id,
+            output_channel,
+            animator,
+            settings: GlideState::INITIAL,
+        }
     }
 
-    async fn handle_note_on(&mut self, event: Event, out: &mut Events, note: u8) {
-        let EventRole::Voice(voice) = event.role else {
-            out.push(event).ok();
-            return;
-        };
-
-        let Some((enabled, transition)) = state::edit_voice(voice, |voice| {
-            (voice.glide.enabled, voice.held_notes.press(note))
-        })
-        .await
+    async fn handle_note_on(&mut self, note: u8) -> bool {
+        let Some(transition) = notes::edit_notes(self.voice_id, |notes| notes.press(note)).await
         else {
-            out.push(event).ok();
-            return;
+            return false;
         };
-
-        if !enabled {
-            out.push(event).ok();
-            return;
+        if !self.settings.enabled {
+            return false;
         }
-
         if let Some(from) = transition.previous_top {
             self.animator
-                .send(Cmd::Start(Modulator::Glide(Glide::new(voice, from, note))))
+                .send(Cmd::Start(Modulator::Glide(Glide::new(
+                    self.voice_id,
+                    self.output_channel,
+                    self.settings,
+                    from,
+                    note,
+                ))))
                 .await
                 .ok();
+            true
         } else {
-            out.push(event).ok();
+            false
         }
     }
 
-    async fn handle_note_off(&mut self, event: Event, out: &mut Events, note: u8) {
-        let EventRole::Voice(voice) = event.role else {
-            out.push(event).ok();
-            return;
-        };
-
-        let Some((enabled, release)) = state::edit_voice(voice, |voice| {
-            (voice.glide.enabled, voice.held_notes.release(note))
-        })
-        .await
+    async fn handle_note_off(&mut self, note: u8) -> bool {
+        let Some(release) = notes::edit_notes(self.voice_id, |notes| notes.release(note)).await
         else {
-            out.push(event).ok();
-            return;
+            return false;
         };
-
-        if !enabled {
-            out.push(event).ok();
-            return;
+        if !self.settings.enabled {
+            return false;
         }
-
         if let Some(release) = release
             && release.was_top
             && let Some(last_held) = release.new_top
         {
             self.animator
                 .send(Cmd::Start(Modulator::Glide(Glide::new(
-                    voice, note, last_held,
+                    self.voice_id,
+                    self.output_channel,
+                    self.settings,
+                    note,
+                    last_held,
                 ))))
                 .await
                 .ok();
             info!("sliding from {} back to {}", note, last_held);
+            true
         } else {
             info!("canceling anim");
             self.animator.send(Cmd::Stop).await.ok();
-            out.push(event).ok();
+            false
+        }
+    }
+
+    fn apply_slider(&mut self, index: u8, value: u16) {
+        match index {
+            3 => self.settings.duration_ms = control_to_u32(value, 0, 4000),
+            2 => self.settings.bend_range_semitones = control_to_u32(value, 1, 24) as f32,
+            1 => self.settings.note_on_velocity = control_to_u8(value, 1, 127),
+            0 => self.settings.enabled = value >= u16::MAX / 2,
+            _ => {}
         }
     }
 }
 
-impl super::Consumer for Glider {
-    async fn consume(&mut self, event: Event, out: &mut Events) {
-        match event {
-            Event {
-                role:
-                    EventRole::Modifier {
-                        voice,
-                        param: ModifierParam::Glide(param),
-                    },
-                payload,
-            } => {
-                state::edit_voice(voice, |voice| match payload {
-                    EventPayload::Control(value) => match param {
-                        GlideParam::Enabled => voice.glide.enabled = value >= u16::MAX / 2,
-                        GlideParam::Duration => {
-                            voice.glide.duration_ms = control_to_u32(value, 0, 4000);
-                        }
-                        GlideParam::BendRange => {
-                            voice.glide.bend_range_semitones = control_to_u32(value, 1, 24) as f32;
-                        }
-                        GlideParam::NoteOnVelocity => {
-                            voice.glide.note_on_velocity = control_to_u8(value, 1, 127);
-                        }
-                    },
-                    EventPayload::Delta(delta) => match param {
-                        GlideParam::Enabled => {
-                            if delta != 0 {
-                                voice.glide.enabled = !voice.glide.enabled;
-                            }
-                        }
-                        GlideParam::Duration => {
-                            let current = voice.glide.duration_ms as i32;
-                            voice.glide.duration_ms =
-                                (current + delta as i32 * 10).clamp(0, 4000) as u32;
-                        }
-                        GlideParam::BendRange => {
-                            let current = voice.glide.bend_range_semitones as i32;
-                            voice.glide.bend_range_semitones =
-                                (current + delta as i32).clamp(1, 24) as f32;
-                        }
-                        GlideParam::NoteOnVelocity => {
-                            let current = voice.glide.note_on_velocity as i16;
-                            voice.glide.note_on_velocity = (current + delta).clamp(1, 127) as u8;
-                        }
-                    },
-                    _ => {}
-                })
-                .await;
-            }
-            event @ Event {
-                role: EventRole::Voice(_),
-                payload: EventPayload::NoteOn { note, .. },
-                ..
-            } => {
-                self.handle_note_on(event, out, note).await;
-            }
-            event @ Event {
-                role: EventRole::Voice(_),
-                payload: EventPayload::NoteOff { note, .. },
-                ..
-            } => {
-                self.handle_note_off(event, out, note).await;
-            }
-            _ => {
-                out.push(event).ok();
-            }
+impl crate::ui::UiProvider for Glider {
+    type Model = crate::ui::GliderUi;
+
+    fn ui_snapshot(&self) -> Self::Model {
+        crate::ui::GliderUi {
+            enabled: self.settings.enabled,
+            duration_ms: self.settings.duration_ms,
+            bend_range_semitones: self.settings.bend_range_semitones,
+            note_on_velocity: self.settings.note_on_velocity,
         }
+    }
+
+    fn has_updates(&mut self) -> bool {
+        core::mem::take(&mut self.ui_dirty)
+    }
+}
+
+impl super::Consumer for Glider {
+    async fn consume(&mut self, input: &Input, _out: &mut OutputEvents) -> bool {
+        let before = self.settings;
+        let consumed = match input {
+            Input::Midi(
+                MidiMsg::ChannelVoice { msg, .. } | MidiMsg::RunningChannelVoice { msg, .. },
+            ) => match msg {
+                ChannelVoiceMsg::NoteOn { note, velocity } if *velocity > 0 => {
+                    self.handle_note_on(*note).await
+                }
+                ChannelVoiceMsg::NoteOn { note, .. } | ChannelVoiceMsg::NoteOff { note, .. } => {
+                    self.handle_note_off(*note).await
+                }
+                _ => false,
+            },
+            Input::Slider { index, value, .. } if *index < 4 => {
+                self.apply_slider(*index, *value);
+                true
+            }
+            Input::Encoder { increment } => {
+                let step = if *increment { 1 } else { -1 };
+                self.settings.duration_ms =
+                    (self.settings.duration_ms as i32 + step * 10).clamp(0, 4000) as u32;
+                true
+            }
+            Input::EncoderClick { pressed: false } => {
+                self.settings.enabled = !self.settings.enabled;
+                true
+            }
+            _ => false,
+        };
+        if self.settings != before {
+            self.ui_dirty = true;
+            self.animator
+                .send(Cmd::Update(Settings::Glide(self.settings)))
+                .await
+                .ok();
+        }
+        consumed
     }
 }

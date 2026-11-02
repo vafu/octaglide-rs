@@ -50,7 +50,6 @@ extern "C" uint32_t rust_micros();
 
 // --- STATIC ALLOCATION ---
 USBHost myusb_static;
-USBHub hub1_static(myusb_static);
 // Don't construct MIDI device globally - do it explicitly in cpp_init()
 MIDIDevice *midi_static_ptr = nullptr;
 
@@ -62,8 +61,11 @@ extern "C" {
 
 void cpp_init() {
   rust_log_info("USB Host: Initializing");
-  // Create MIDI device driver (placement new into static storage)
-  static uint8_t midi_storage[sizeof(MIDIDevice)] __attribute__((aligned(16)));
+  // Rust startup does not run C++ global constructors. Construct each driver
+  // explicitly, respecting the alignment required by its DMA descriptors.
+  alignas(USBHub) static uint8_t hub_storage[sizeof(USBHub)];
+  new (hub_storage) USBHub(myusb_static);
+  alignas(MIDIDevice) static uint8_t midi_storage[sizeof(MIDIDevice)];
   midi_static_ptr = new (midi_storage) MIDIDevice(myusb_static);
   midi = midi_static_ptr;
 
@@ -72,6 +74,19 @@ void cpp_init() {
     return;
   }
 
+  // The host power switch is GPIO_EMC_40. Arduino uses fast GPIO8, but
+  // the Rust BSP uses the normal GPIO ports. Drive the currently selected bank.
+  constexpr uint32_t power_bit = 1u << 26;
+  IOMUXC_SW_MUX_CTL_PAD_GPIO_EMC_40 = 5;
+  IOMUXC_SW_PAD_CTL_PAD_GPIO_EMC_40 = 0x0008;
+  if (IOMUXC_GPR_GPR28 & power_bit) {
+    GPIO8_DR_SET = power_bit;
+    GPIO8_GDIR |= power_bit;
+  } else {
+    GPIO3_DR_SET = power_bit;
+    GPIO3_GDIR |= power_bit;
+  }
+  rust_log_info("USB Host: VBUS power switch enabled");
   myusb->begin();
   rust_log_info("USB Host: Ready");
 }
@@ -79,6 +94,8 @@ void cpp_task() {
   if (myusb)
     myusb->Task();
 }
+uint32_t cpp_host_port_status() { return USBHS_PORTSC1; }
+
 void cpp_usb_isr() {
   if (myusb)
     myusb->isr();

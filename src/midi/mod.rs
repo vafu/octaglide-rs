@@ -14,7 +14,7 @@ use crate::{
 
 pub use fmt::MidiFmt;
 
-// TODO: consider changing midi BAUD (elektron Turbo), might need to update buf size.
+// TODO(octaglide-task-30): evaluate Elektron Turbo MIDI baud and buffer sizing.
 const MIDI_BUF_SIZE: usize = 32;
 
 /// Common interface for MIDI bus implementations (UART, USB, etc.)
@@ -98,7 +98,7 @@ impl UartMidiBus {
                 self.uart.write_byte(byte);
             } else {
                 unsafe {
-                    ral::modify_reg!(ral::lpuart, &*ral::lpuart::LPUART6, CTRL, TIE: 0);
+                    ral::modify_reg!(ral::lpuart, &*ral::lpuart::LPUART8, CTRL, TIE: 0);
                 }
             }
         }
@@ -139,7 +139,7 @@ impl UartMidiBus {
         }
         if !self.tx_buf.is_empty() {
             unsafe {
-                ral::modify_reg!(ral::lpuart, &*ral::lpuart::LPUART6, CTRL, TIE: 1);
+                ral::modify_reg!(ral::lpuart, &*ral::lpuart::LPUART8, CTRL, TIE: 1);
             }
         }
     }

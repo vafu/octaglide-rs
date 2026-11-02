@@ -1,7 +1,10 @@
 use heapless::Vec;
 use midi_msg::{Channel, ChannelVoiceMsg, MidiMsg};
 
-use crate::state::{self, VoiceId};
+use crate::{
+    core::{GlideState, VoiceId},
+    notes,
+};
 
 use super::{Messages, Modulation};
 
@@ -12,15 +15,19 @@ const FALLBACK_BEND_RANGE_SEMITONES: f32 = 1.0;
 #[derive(Debug)]
 pub struct Glide {
     voice: VoiceId,
+    channel: Channel,
+    settings: GlideState,
     from: u8,
     to: u8,
     active_note: u8,
 }
 
 impl Glide {
-    pub fn new(voice: VoiceId, from: u8, to: u8) -> Self {
+    pub fn new(voice: VoiceId, channel: Channel, settings: GlideState, from: u8, to: u8) -> Self {
         Self {
             voice,
+            channel,
+            settings,
             from,
             to,
             active_note: from,
@@ -46,10 +53,14 @@ impl Glide {
 }
 
 impl Modulation for Glide {
+    fn update(&mut self, settings: &crate::anim::Settings) {
+        if let crate::anim::Settings::Glide(settings) = settings {
+            self.settings = *settings;
+        }
+    }
+
     async fn duration_ms(&self) -> u32 {
-        state::read_voice(self.voice, |voice| voice.glide.duration_ms)
-            .await
-            .unwrap_or(0)
+        self.settings.duration_ms
     }
 
     async fn next_stage(&mut self) -> bool {
@@ -57,8 +68,7 @@ impl Modulation for Glide {
     }
 
     async fn animate(&mut self, progress: f32, _depth: f32, _offset: f32) -> Messages {
-        let (channel, glide) =
-            state::read_voice(self.voice, |voice| (voice.output_channel, voice.glide)).await?;
+        let (channel, glide) = (self.channel, self.settings);
         let bend_range = bend_range_semitones(glide.bend_range_semitones);
         let mut messages = Vec::<MidiMsg, 3>::new();
 
@@ -103,11 +113,10 @@ impl Modulation for Glide {
             });
 
             // Send NoteOff for the previous note only if it's not user-held
-            let active_note_held = state::read_voice(self.voice, |voice| {
-                voice.held_notes.is_held(self.active_note)
-            })
-            .await
-            .unwrap_or(false);
+            let active_note_held =
+                notes::read_notes(self.voice, |notes| notes.is_held(self.active_note))
+                    .await
+                    .unwrap_or(false);
             if self.active_note != 0 && !active_note_held {
                 let _ = messages.push(MidiMsg::ChannelVoice {
                     channel,
@@ -127,15 +136,14 @@ impl Modulation for Glide {
     }
 
     async fn reset(&mut self) -> Messages {
-        let channel = state::read_voice(self.voice, |voice| voice.output_channel).await?;
+        let channel = self.channel;
         let mut messages = Vec::<MidiMsg, 3>::new();
 
         // Send NoteOff for the currently active note only if it's not user-held
-        let active_note_held = state::read_voice(self.voice, |voice| {
-            voice.held_notes.is_held(self.active_note)
-        })
-        .await
-        .unwrap_or(false);
+        let active_note_held =
+            notes::read_notes(self.voice, |notes| notes.is_held(self.active_note))
+                .await
+                .unwrap_or(false);
         if self.active_note != 0 && !active_note_held {
             let _ = messages.push(MidiMsg::ChannelVoice {
                 channel,

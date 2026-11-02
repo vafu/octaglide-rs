@@ -6,3 +6,8 @@ rustflags = [
     "-C", "link-arg=-Tt4link.x",
 ]
 runner = "./flash.sh"
+
+[env]
+# RTIC keeps task executors on the startup stack. Four voices with twelve
+# animation engines need room beyond the BSP's default 16 KiB reservation.
+TEENSY4_STACK_SIZE = "65536"

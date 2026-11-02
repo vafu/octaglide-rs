@@ -75,10 +75,10 @@ OctaglideRS is an embedded Rust MIDI processor that runs on a Teensy 4.1 microco
 ```
 
 - **Platform**: Teensy 4.1 (ARM Cortex-M7 @ 600 MHz, 8MB flash)
-- **MIDI**: LPUART6 @ 31250 baud (standard MIDI) + USB Host MIDI
+- **MIDI**: LPUART8 on P20/P21 @ 31250 baud (standard MIDI) + USB Host MIDI
 - **USB Host**: Built-in USB Host pins with breakout to USB-A connector
 - **Debug**: USB logging via imxrt-log (USB device port)
-- **Current State**: Prototype on protoboard, all hardware subject to change
+- **Current State**: Assembled Teensy 4.1 carrier PCB; see `PINOUT.md`
 
 ## Architecture
 
@@ -186,16 +186,16 @@ octaglide-rs/
 **Location**: `src/main.rs` (reset_button_isr)
 
 **How it works**:
-- P14 (GPIO1_IO18) configured as input with 100kΩ pulldown
-- Wire momentary button from P14 to 3.3V
-- Interrupt-driven on rising edge (button press)
+- P7 (GPIO2_IO17) configured as input with a 100kΩ internal pullup
+- The carrier PCB's momentary switch connects P7 to ground
+- Interrupt-driven on falling edge (button press)
 - Immediately resets MCU via `cortex_m::peripheral::SCB::sys_reset()`
 
 **Implementation details**:
-- Uses GPIO1_COMBINED_16_31 interrupt (P14 is GPIO1 pin 18, which is in the 16-31 range)
+- Uses GPIO2_COMBINED_16_31 interrupt (P7 is GPIO2 pin 17, which is in the 16-31 range)
 - Priority 2 (same as other ISRs)
 - No debouncing needed - interrupt fires once, MCU resets immediately
-- Important: P14 uses GPIO1_COMBINED_16_31, not GPIO1_COMBINED_0_15!
+- Important: P7 uses GPIO2_COMBINED_16_31, not GPIO2_COMBINED_0_15!
 - RTIC automatically enables the interrupt via `#[task(binds = ...)]` - no manual NVIC setup needed
 
 **GPIO Interrupt Mapping Reference** (for future encoder work):
@@ -468,5 +468,4 @@ You MUST read the overview resource to understand the complete workflow. The inf
 </CRITICAL_INSTRUCTION>
 
 <!-- BACKLOG.MD MCP GUIDELINES END -->
-
 

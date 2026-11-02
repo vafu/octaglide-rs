@@ -26,6 +26,7 @@ fn panic(info: &PanicInfo) -> ! {
 mod anim;
 mod core;
 mod midi;
+mod notes;
 mod state;
 mod ui;
 mod usb;
@@ -36,9 +37,13 @@ extern crate alloc;
 mod app {
 
     use crate::{
-        anim::animator::{AnimationEngine, Cmd},
-        core::{Core, Input as CoreIn, MidiOut},
+        anim::{ANIMATORS_PER_VOICE, Cmd, VoiceAnimators, animator::AnimationEngine},
+        core::{Core, Input as CoreIn, MAX_VOICES, MidiOut},
         midi::{Bus, MidiBus, MidiFmt, UartMidiBus},
+        ui::{
+            BUTTON_QUEUE_CAPACITY, ButtonEdge, ButtonReceiver, ButtonSender,
+            DisplaySnapshot, EncoderDecoder, UiReader,
+        },
         usb::UsbMidiBus,
     };
     use board::t41 as brd;
@@ -49,7 +54,7 @@ mod app {
     use rtic_monotonics::systick::{Systick, *};
     use rtic_sync::{
         channel::{Receiver, Sender},
-        make_channel,
+        make_channel, make_signal,
     };
     use teensy_usbhost as usbhost;
     use teensy4_bsp::{
@@ -63,38 +68,35 @@ mod app {
             },
             lpuart::{Interrupts, Lpuart, Pins},
         },
-        pins::t40 as pins,
+        pins::t41 as pins,
         ral::lpuart::Instance,
     };
 
-    pub type MidiUart = Lpuart<Pins<pins::P1, pins::P0>, 6>;
+    pub type MidiUart = Lpuart<Pins<pins::P20, pins::P21>, 8>;
     pub type MidiSender = Sender<'static, MidiOut, MIDI_CHANNEL_CAPACITY>;
     pub type MidiReceiver = Receiver<'static, MidiOut, MIDI_CHANNEL_CAPACITY>;
     pub type Animator = Sender<'static, Cmd, 1>;
     pub type CoreSender = Sender<'static, CoreIn, CORE_INPUT_CHANNEL_CAPACITY>;
     pub type CoreReceiver = Receiver<'static, CoreIn, CORE_INPUT_CHANNEL_CAPACITY>;
 
-    macro_rules! make_animator {
-        ($task_name:ident, $midi_sender:expr) => {{
-            let (animator, cmd_rx) = make_channel!(Cmd, 1);
-            let engine = AnimationEngine::new(cmd_rx);
-            $task_name::spawn(engine, $midi_sender.clone()).unwrap();
-            animator
+    // Each expansion reserves three distinct static channels for one voice.
+    macro_rules! make_voice_animators {
+        () => {{
+            let (glide, glide_rx) = make_channel!(Cmd, 1);
+            let (first, first_rx) = make_channel!(Cmd, 1);
+            let (second, second_rx) = make_channel!(Cmd, 1);
+            (
+                VoiceAnimators {
+                    glide,
+                    envelopes: [first, second],
+                },
+                [
+                    AnimationEngine::new(glide_rx),
+                    AnimationEngine::new(first_rx),
+                    AnimationEngine::new(second_rx),
+                ],
+            )
         }};
-    }
-
-    async fn run_animator_loop(
-        mut engine: AnimationEngine,
-        mut sender: MidiSender,
-        tag: &'static str,
-    ) -> ! {
-        loop {
-            if let Some(msgs) = engine.tick().await {
-                for msg in msgs {
-                    sender.send(MidiOut { msg, tag }).await.ok();
-                }
-            }
-        }
     }
 
     const HEAP_SIZE: usize = 1024;
@@ -114,16 +116,25 @@ mod app {
     struct Local {
         led: board::Led,
         core: Core,
-        reset_btn: gpio::Input<pins::P33>,
+        reset_btn: gpio::Input<pins::P7>,
+        button1: gpio::Input<pins::P28>,
+        button2: gpio::Input<pins::P29>,
+        button3: gpio::Input<pins::P30>,
+        button4: gpio::Input<pins::P31>,
+        buttons_gpio3_sender: ButtonSender,
+        buttons_gpio4_sender: ButtonSender,
         adc1: adc::Adc<1>,
-        slider0: adc::AnalogInput<pins::P14, 1>,
-        slider1: adc::AnalogInput<pins::P15, 1>,
-        slider2: adc::AnalogInput<pins::P24, 1>,
-        slider3: adc::AnalogInput<pins::P25, 1>,
-        enc_a: gpio::Input<pins::P20>,
-        enc_b: gpio::Input<pins::P19>,
-        enc_click: gpio::Input<pins::P18>,
+        adc2: adc::Adc<2>,
+        slider0: adc::AnalogInput<pins::P24, 1>,
+        slider1: adc::AnalogInput<pins::P25, 1>,
+        slider2: adc::AnalogInput<pins::P26, 2>,
+        slider3: adc::AnalogInput<pins::P27, 2>,
+        enc_a: gpio::Input<pins::P39>,
+        enc_b: gpio::Input<pins::P40>,
+        enc_click: gpio::Input<pins::P41>,
+        encoder: EncoderDecoder,
         enc_sender: CoreSender,
+        enc_button_sender: ButtonSender,
     }
 
     #[global_allocator]
@@ -164,12 +175,14 @@ mod app {
         let board::Resources {
             mut gpio1,
             mut gpio2,
+            mut gpio3,
             mut gpio4,
             adc1,
+            adc2,
             mut pins,
             usb,
-            lpuart6,
-            lpi2c3,
+            lpuart8,
+            lpi2c1,
             ..
         } = brd(cx.device);
 
@@ -180,56 +193,83 @@ mod app {
 
         let (midi_sender, midi_receiver) = make_channel!(MidiOut, MIDI_CHANNEL_CAPACITY);
         let (core_sender, core_receiver) = make_channel!(CoreIn, CORE_INPUT_CHANNEL_CAPACITY);
+        let (button_sender, button_receiver) = make_channel!(ButtonEdge, BUTTON_QUEUE_CAPACITY);
 
-        let glide_animator = make_animator!(animate_glide, midi_sender);
-        let envelope_animator = make_animator!(animate_envelope, midi_sender);
+        let (first, first_engines) = make_voice_animators!();
+        let (second, second_engines) = make_voice_animators!();
+        let (third, third_engines) = make_voice_animators!();
+        let (fourth, fourth_engines) = make_voice_animators!();
+        animate_voices::spawn(
+            [first_engines, second_engines, third_engines, fourth_engines],
+            midi_sender.clone(),
+        )
+        .unwrap();
 
-        // Configure reset button (P33 / GPIO4_IO07) with pullup for interrupt on rising edge
-        // Wire momentary button from P33 to 3.3V
+        // The reset button connects P7 to ground, so use a pullup and falling-edge interrupt.
         iomuxc::configure(
-            &mut pins.p33,
+            &mut pins.p7,
             iomuxc::Config::zero().set_pull_keeper(Some(iomuxc::PullKeeper::Pullup100k)),
         );
-        let reset_btn = gpio4.input(pins.p33);
+        let reset_btn = gpio2.input(pins.p7);
+        gpio2.set_interrupt(&reset_btn, Some(gpio::Trigger::FallingEdge));
 
-        // Enable GPIO interrupt on rising edge (button press)
-        gpio4.set_interrupt(&reset_btn, Some(gpio::Trigger::RisingEdge));
-
-        // Configure rotary encoder on P20 (A), P19 (B), P18 (Click) — all GPIO1_COMBINED_16_31
-        // Wiring: EC11 common → GND, A/B/Click → internal 100kΩ pullup, falling edge
-        // TODO(task-28): upgrade to full quadrature decoding for better reliability at high speed
+        // The encoder connects A/B/click to P39/P40/P41 and common/switch to ground.
+        // The PCB supplies external pullups and debounce capacitors on all three signals.
         let enc_cfg = iomuxc::Config::zero().set_pull_keeper(Some(iomuxc::PullKeeper::Pullup100k));
-        iomuxc::configure(&mut pins.p18, enc_cfg);
-        iomuxc::configure(&mut pins.p19, enc_cfg);
-        iomuxc::configure(&mut pins.p20, enc_cfg);
-        let enc_a = gpio1.input(pins.p20);
-        let enc_b = gpio1.input(pins.p19);
-        let enc_click = gpio1.input(pins.p18);
-        gpio1.set_interrupt(&enc_a, Some(gpio::Trigger::FallingEdge));
-        gpio1.set_interrupt(&enc_click, Some(gpio::Trigger::FallingEdge));
+        iomuxc::configure(&mut pins.p39, enc_cfg);
+        iomuxc::configure(&mut pins.p40, enc_cfg);
+        iomuxc::configure(&mut pins.p41, enc_cfg);
+        let enc_a = gpio1.input(pins.p39);
+        let enc_b = gpio1.input(pins.p40);
+        let enc_click = gpio1.input(pins.p41);
+        let encoder = EncoderDecoder::new(enc_a.is_set(), enc_b.is_set());
+        gpio1.set_interrupt(&enc_a, Some(gpio::Trigger::EitherEdge));
+        gpio1.set_interrupt(&enc_b, Some(gpio::Trigger::EitherEdge));
+        gpio1.set_interrupt(&enc_click, Some(gpio::Trigger::EitherEdge));
 
-        // Configure ADC sliders: Attack/Decay on P14/P15, Sustain/Release moved to P24/P25
-        // (P16/P17 freed for LPI2C3 OLED)
-        // TODO: move sliders to ACMP (comparator) pins for interrupt-driven change detection.
+        // P28-P31 are active-low buttons with external pullups and RC filtering.
+        iomuxc::configure(&mut pins.p28, enc_cfg);
+        iomuxc::configure(&mut pins.p29, enc_cfg);
+        iomuxc::configure(&mut pins.p30, enc_cfg);
+        iomuxc::configure(&mut pins.p31, enc_cfg);
+        let button1 = gpio3.input(pins.p28);
+        let button2 = gpio4.input(pins.p29);
+        let button3 = gpio3.input(pins.p30);
+        let button4 = gpio3.input(pins.p31);
+        gpio3.set_interrupt(&button1, Some(gpio::Trigger::EitherEdge));
+        gpio4.set_interrupt(&button2, Some(gpio::Trigger::EitherEdge));
+        gpio3.set_interrupt(&button3, Some(gpio::Trigger::EitherEdge));
+        gpio3.set_interrupt(&button4, Some(gpio::Trigger::EitherEdge));
+
+        // PCB order is P24=Release, P25=Sustain, P26=Decay, P27=Attack.
+        // P24/P25 are ADC1 inputs; P26/P27 are ADC2 inputs.
+        // TODO(octaglide-task-25): move sliders to ACMP pins for interrupt-driven change detection.
         // IMXRT1060 has 4 ACMP channels (ACMP1-4) which would fit all 4 sliders.
         // Use tracking comparator pattern: read value in ISR, reprogram threshold to new_value ± hysteresis.
-        let slider0 = adc::AnalogInput::new(pins.p14);
-        let slider1 = adc::AnalogInput::new(pins.p15);
-        let slider2 = adc::AnalogInput::new(pins.p24);
-        let slider3 = adc::AnalogInput::new(pins.p25);
+        let slider0 = adc::AnalogInput::new(pins.p24);
+        let slider1 = adc::AnalogInput::new(pins.p25);
+        let slider2 = adc::AnalogInput::new(pins.p26);
+        let slider3 = adc::AnalogInput::new(pins.p27);
 
-        let i2c = board::lpi2c(lpi2c3, pins.p16, pins.p17, board::Lpi2cClockSpeed::MHz1);
-        oled_task::spawn(i2c).ok();
+        let i2c = board::lpi2c(lpi2c1, pins.p19, pins.p18, board::Lpi2cClockSpeed::KHz400);
+        let (ui_writer, ui_reader) = make_signal!(DisplaySnapshot);
+        oled_task::spawn(i2c, ui_reader).ok();
 
         midi_dispatch::spawn(midi_receiver).unwrap();
         core_task::spawn(core_receiver).unwrap();
-        usb_host_init::spawn().unwrap();
+        usb_host_maintenance::spawn(core_sender.clone()).unwrap();
 
         // Create UART bus for RX
-        let uart_bus =
-            UartMidiBus::new(prepare_uart(lpuart6, pins.p1, pins.p0), core_sender.clone());
+        let uart_bus = UartMidiBus::new(
+            prepare_uart(lpuart8, pins.p20, pins.p21),
+            core_sender.clone(),
+        );
 
         let enc_sender = core_sender.clone();
+        let enc_button_sender = button_sender.clone();
+        let buttons_gpio3_sender = button_sender.clone();
+        let buttons_gpio4_sender = button_sender;
+        button_task::spawn(button_receiver, core_sender.clone()).unwrap();
         read_sliders::spawn(core_sender).unwrap();
 
         // Create USB bus for TX
@@ -242,9 +282,16 @@ mod app {
             },
             Local {
                 led: board::led(&mut gpio2, pins.p13),
-                core: Core::new(midi_sender, glide_animator, envelope_animator),
+                core: Core::new(midi_sender, [first, second, third, fourth], ui_writer),
                 reset_btn,
+                button1,
+                button2,
+                button3,
+                button4,
+                buttons_gpio3_sender,
+                buttons_gpio4_sender,
                 adc1,
+                adc2,
                 slider0,
                 slider1,
                 slider2,
@@ -252,7 +299,9 @@ mod app {
                 enc_a,
                 enc_b,
                 enc_click,
+                encoder,
                 enc_sender,
+                enc_button_sender,
             },
         )
     }
@@ -263,7 +312,7 @@ mod app {
             cortex_m::asm::wfi();
         }
     }
-    #[task(binds = LPUART6, shared = [rx_bus], priority = 2)]
+    #[task(binds = LPUART8, shared = [rx_bus], priority = 2)]
     fn midi_handler(mut cx: midi_handler::Context) {
         cx.shared.rx_bus.lock(|bus| bus.poll());
     }
@@ -298,42 +347,14 @@ mod app {
     }
 
     #[task(priority = 1)]
-    #[allow(static_mut_refs)]
-    async fn usb_host_init(_cx: usb_host_init::Context) {
-        usbhost::init();
+    async fn usb_host_maintenance(_cx: usb_host_maintenance::Context, sender: CoreSender) -> ! {
+        crate::usb::run_host(sender).await
     }
 
-    /// USB Host periodic maintenance task
-    #[task(priority = 1)]
-    async fn usb_host_maintenance(_cx: usb_host_maintenance::Context) {
-        loop {
-            usbhost::task();
-
-            // Check connection status
-            let connected = usbhost::midi_connected();
-
-            if connected {
-                let (vendor, product) = usbhost::get_device_info();
-                info!(
-                    "USB MIDI device CONNECTED - VID:{:04X} PID:{:04X}",
-                    vendor, product
-                );
-                return;
-            }
-            // Sleep to avoid burning CPU - only need to service timers/timeouts
-            Systick::delay(10.millis()).await;
-        }
-    }
-
-    /// USB Host interrupt handler
+    /// USB Host interrupt handler; maintenance is started once during init.
     #[task(binds = USB_OTG2, shared = [tx_bus], priority = 2)]
     fn usb_host_isr(_cx: usb_host_isr::Context) {
         usbhost::usb_isr();
-        if !usbhost::midi_connected() {
-            // TODO: sucks, need to make a proper device state management later.
-            // .ok() here is needed so the system avoids spawning another maintenance task while enumerating.
-            usb_host_maintenance::spawn().ok();
-        }
     }
 
     #[task(binds = USB_OTG1, priority = 2)]
@@ -358,9 +379,9 @@ mod app {
 
     /// Reset button interrupt handler
     ///
-    /// P33 (GPIO4_IO07) with pullup - wire button from P33 to 3.3V
-    /// Triggers on rising edge, immediately resets the MCU
-    #[task(binds = GPIO4_COMBINED_0_15, local = [reset_btn], priority = 2)]
+    /// P7 (GPIO2_IO17) is pulled high and grounded by the reset switch.
+    /// A falling edge immediately resets the MCU.
+    #[task(binds = GPIO2_COMBINED_16_31, local = [reset_btn], priority = 2)]
     fn reset_button_isr(cx: reset_button_isr::Context) {
         let btn = cx.local.reset_btn;
         if btn.is_triggered() {
@@ -369,44 +390,59 @@ mod app {
         }
     }
 
-    /// Rotary encoder interrupt handler — P18 (A), P19 (B), P20 (Click), all GPIO1_COMBINED_16_31.
-    /// Simple decoding: interrupt on A rising edge, read B level for direction.
-    /// TODO(task-28): upgrade to full quadrature decoding (both edges of A+B, lookup table)
-    ///                for better reliability at high speed and natural bounce filtering.
-    #[task(binds = GPIO1_COMBINED_16_31, local = [enc_a, enc_b, enc_click, enc_sender], priority = 2)]
+    /// Rotary encoder interrupt handler: P39 (A), P40 (B), P41 (Click).
+    /// A/B use full quadrature decoding; switch edges share the button debounce task.
+    #[task(
+        binds = GPIO1_COMBINED_16_31,
+        local = [enc_a, enc_b, enc_click, encoder, enc_sender, enc_button_sender],
+        priority = 2
+    )]
     fn encoder_isr(cx: encoder_isr::Context) {
         crate::ui::handle_encoder_interrupt(cx);
     }
 
+    #[task(
+        binds = GPIO3_COMBINED_16_31,
+        local = [button1, button3, button4, buttons_gpio3_sender],
+        priority = 2
+    )]
+    fn buttons_gpio3_isr(cx: buttons_gpio3_isr::Context) {
+        crate::ui::handle_buttons_gpio3_interrupt(cx);
+    }
+
+    #[task(
+        binds = GPIO4_COMBINED_16_31,
+        local = [button2, buttons_gpio4_sender],
+        priority = 2
+    )]
+    fn buttons_gpio4_isr(cx: buttons_gpio4_isr::Context) {
+        crate::ui::handle_buttons_gpio4_interrupt(cx);
+    }
+
+    #[task(priority = 1)]
+    async fn button_task(_cx: button_task::Context, receiver: ButtonReceiver, sender: CoreSender) -> ! {
+        crate::ui::run_buttons(receiver, sender).await
+    }
+
     /// Periodically reads 4 ADC sliders and sends ADSR parameter updates to core.
-    /// Sliders map: 0=Attack, 1=Decay, 2=Sustain, 3=Release
+    /// Sliders map: 0=Release, 1=Sustain, 2=Decay, 3=Attack.
     /// Only sends an update when a slider value changes by more than SLIDER_DEADBAND counts.
-    #[task(local = [adc1, slider0, slider1, slider2, slider3, prev: [u16; 4] = [u16::MAX; 4]], priority = 1)]
+    #[task(local = [adc1, adc2, slider0, slider1, slider2, slider3, prev: [u16; 4] = [u16::MAX; 4]], priority = 1)]
     async fn read_sliders(cx: read_sliders::Context, sender: CoreSender) -> ! {
         crate::ui::read_sliders(cx, sender).await
     }
 
-    // ANIMATION BOILERPLATE
     #[task(priority = 2)]
-    async fn animate_envelope(
-        _cx: animate_envelope::Context,
-        engine: AnimationEngine,
+    async fn animate_voices(
+        _cx: animate_voices::Context,
+        engines: [[AnimationEngine; ANIMATORS_PER_VOICE]; MAX_VOICES],
         sender: MidiSender,
-    ) -> ! {
-        run_animator_loop(engine, sender, "env").await
-    }
-
-    #[task(priority = 2)]
-    async fn animate_glide(
-        _cx: animate_glide::Context,
-        engine: AnimationEngine,
-        sender: MidiSender,
-    ) -> ! {
-        run_animator_loop(engine, sender, "glide").await
+    ) {
+        crate::anim::run_animations(engines, sender).await
     }
 
     #[task(priority = 1)]
-    async fn oled_task(_cx: oled_task::Context, i2c: board::Lpi2c3) {
-        crate::ui::run_envelope_display(i2c).await;
+    async fn oled_task(_cx: oled_task::Context, i2c: board::Lpi2c1, updates: UiReader) {
+        crate::ui::run_envelope_display(i2c, updates).await;
     }
 }

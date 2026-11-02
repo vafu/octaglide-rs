@@ -23,12 +23,13 @@ extern "C" {
     fn cpp_init();
     fn cpp_task();
     fn cpp_usb_isr();
+    fn cpp_host_port_status() -> u32;
     fn cpp_send_midi(data: *const u8, len: u8);
     fn cpp_midi_connected() -> i32;
     fn cpp_midi_get_device_info(vendor: *mut u16, product: *mut u16);
 }
 
-// TODO: task-24 - Fix callback indirection breaking USB enumeration
+// TODO(octaglide-task-24): Fix callback indirection breaking USB enumeration
 // This callback mechanism works but breaks USB for unknown reasons.
 // For now, rust_micros() must be defined directly in main.rs.
 //
@@ -101,6 +102,12 @@ pub fn usb_isr() {
     unsafe {
         cpp_usb_isr();
     }
+}
+
+/// Read the host port status register for connection-stage diagnostics.
+/// Call only after init(); this does not acknowledge or clear status bits.
+pub fn host_port_status() -> u32 {
+    unsafe { cpp_host_port_status() }
 }
 
 /// Check if a MIDI device is connected.
