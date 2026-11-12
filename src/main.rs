@@ -8,6 +8,8 @@ use cortex_m::interrupt;
 #[allow(static_mut_refs)]
 fn panic(info: &PanicInfo) -> ! {
     interrupt::disable();
+    crate::crashlog::panic(info);
+    log::set_max_level(log::LevelFilter::Error);
     log::error!("{}", info);
     unsafe {
         if let Some(poller) = app::POLLER.as_mut() {
@@ -25,6 +27,7 @@ fn panic(info: &PanicInfo) -> ! {
 
 mod anim;
 mod core;
+mod crashlog;
 mod midi;
 mod notes;
 mod state;
@@ -39,7 +42,7 @@ mod app {
     use crate::{
         anim::{ANIMATORS_PER_VOICE, Cmd, VoiceAnimators, animator::AnimationEngine},
         core::{Core, Input as CoreIn, MAX_VOICES, MidiOut},
-        midi::{Bus, MidiBus, MidiFmt, UartMidiBus},
+        midi::{Bus, MidiBus, log_midi, UartMidiBus},
         ui::{
             BUTTON_QUEUE_CAPACITY, ButtonEdge, ButtonReceiver, ButtonSender,
             DisplaySnapshot, EncoderDecoder, UiReader,
@@ -49,8 +52,6 @@ mod app {
     use board::t41 as brd;
     use embedded_alloc::LlffHeap as Heap;
     use imxrt_log as logging;
-    use log::info;
-    use midi_msg::MidiMsg;
     use rtic_monotonics::systick::{Systick, *};
     use rtic_sync::{
         channel::{Receiver, Sender},
@@ -103,7 +104,6 @@ mod app {
     const MIDI_BAUD: u32 = 31250;
     const MIDI_CHANNEL_CAPACITY: usize = 16;
     const CORE_INPUT_CHANNEL_CAPACITY: usize = 16;
-
     pub(crate) static mut POLLER: Option<logging::Poller> = None;
 
     #[shared]
@@ -190,6 +190,8 @@ mod app {
         crate::interrupt::free(|_| unsafe {
             POLLER = Some(poller);
         });
+        log::set_max_level(configured_log_level());
+        crashlog_dump::spawn().ok();
 
         let (midi_sender, midi_receiver) = make_channel!(MidiOut, MIDI_CHANNEL_CAPACITY);
         let (core_sender, core_receiver) = make_channel!(CoreIn, CORE_INPUT_CHANNEL_CAPACITY);
@@ -322,17 +324,20 @@ mod app {
         loop {
             let MidiOut { msg, tag } = r.recv().await.unwrap();
             cx.shared.tx_bus.lock(|bus| {
-                if !matches!(
-                    msg,
-                    MidiMsg::ChannelVoice {
-                        msg: midi_msg::ChannelVoiceMsg::PitchBend { .. },
-                        ..
-                    }
-                ) {
-                    info!(">>> [{}] {}", tag, MidiFmt(&msg));
-                }
+                log_midi(">>>", Some(tag), &msg);
                 bus.send(&msg);
             });
+        }
+    }
+
+    fn configured_log_level() -> log::LevelFilter {
+        match env!("OCTAGLIDE_LOG") {
+            "off" => log::LevelFilter::Off,
+            "error" => log::LevelFilter::Error,
+            "warn" => log::LevelFilter::Warn,
+            "debug" => log::LevelFilter::Debug,
+            "trace" => log::LevelFilter::Trace,
+            _ => log::LevelFilter::Info,
         }
     }
 
@@ -349,6 +354,16 @@ mod app {
     #[task(priority = 1)]
     async fn usb_host_maintenance(_cx: usb_host_maintenance::Context, sender: CoreSender) -> ! {
         crate::usb::run_host(sender).await
+    }
+
+    /// Give the USB serial host time to attach before reporting a retained panic.
+    #[task(priority = 1)]
+    async fn crashlog_dump(_cx: crashlog_dump::Context) {
+        Systick::delay(3_000.millis()).await;
+        if !crate::crashlog::flush() {
+            log::info!("crash log: none");
+        }
+        crate::crashlog::clear();
     }
 
     /// USB Host interrupt handler; maintenance is started once during init.

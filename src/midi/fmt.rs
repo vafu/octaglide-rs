@@ -1,6 +1,34 @@
 use core::fmt;
 use midi_msg::{ChannelVoiceMsg, MidiMsg};
 
+/// Suppress messages that are too frequent to be useful in normal logs.
+pub fn should_log(msg: &MidiMsg) -> bool {
+    !matches!(
+        msg,
+        MidiMsg::ChannelVoice {
+            msg: ChannelVoiceMsg::PitchBend { .. },
+            ..
+        } | MidiMsg::RunningChannelVoice {
+            msg: ChannelVoiceMsg::PitchBend { .. },
+            ..
+        } | MidiMsg::SystemRealTime {
+            msg: midi_msg::SystemRealTimeMsg::TimingClock,
+        }
+    )
+}
+
+/// Log MIDI traffic at debug level.
+pub fn log_midi(prefix: &str, tag: Option<&str>, msg: &MidiMsg) {
+    if !should_log(msg) {
+        return;
+    }
+
+    match tag {
+        Some(tag) => log::debug!("{} [{}] {}", prefix, tag, MidiFmt(msg)),
+        None => log::debug!("{} {}", prefix, MidiFmt(msg)),
+    }
+}
+
 /// Wrapper for formatting MIDI messages concisely
 pub struct MidiFmt<'a>(pub &'a MidiMsg);
 

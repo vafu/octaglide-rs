@@ -40,6 +40,9 @@ Guidelines for agents working in this repository.
 - Run `cargo check` after Rust or C/C++ wrapper changes.
 - Avoid repository-wide formatting churn unless the task is explicitly a formatting cleanup.
 - For hardware-facing behavior, document what was verified by build versus what still needs board testing.
+- When flashing, if the Teensy is not already in HalfKay mode, immediately run the loader with `-w` and leave it waiting:
+  `teensy_loader_cli --mcu=TEENSY41 -w -v target/thumbv7em-none-eabihf/release/octaglide-rs.hex`
+  Do not stop and ask the user to report back; the user will tap Program once while the loader waits. Report completion after programming and boot.
 
 ## Git And Task Hygiene
 

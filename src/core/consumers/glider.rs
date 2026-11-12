@@ -1,4 +1,4 @@
-use log::info;
+use log::debug;
 use midi_msg::{Channel, ChannelVoiceMsg, MidiMsg};
 
 use crate::{
@@ -78,10 +78,10 @@ impl Glider {
                 ))))
                 .await
                 .ok();
-            info!("sliding from {} back to {}", note, last_held);
+            debug!("sliding from {} back to {}", note, last_held);
             true
         } else {
-            info!("canceling anim");
+            debug!("canceling anim");
             self.animator.send(Cmd::Stop).await.ok();
             false
         }

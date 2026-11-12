@@ -1,5 +1,5 @@
 use futures::FutureExt;
-use log::info;
+use log::debug;
 use midi_msg::{Channel, ChannelVoiceMsg, ControlChange, MidiMsg};
 use rtic_monotonics::{
     Monotonic,
@@ -70,7 +70,7 @@ impl AnimationEngine {
                             self.state = if self.modulator.as_mut()?.next_stage().await || self.looping {
                                 State::Animating { last_updated: now, progress_at: 0.0 }
                             } else {
-                                info!("anim end");
+                                debug!("anim end");
                                 State::Idle
                             };
                         } else {

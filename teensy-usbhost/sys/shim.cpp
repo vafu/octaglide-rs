@@ -110,6 +110,37 @@ void cpp_send_midi(const uint8_t *data, uint8_t len) {
   uint8_t msg_type = status & 0xF0;
   uint8_t channel = (status & 0x0F) + 1; // MIDIDevice uses 1-indexed channels
 
+  // System real-time messages are single-byte and bypass running status.
+  if (status >= 0xF8) {
+    midi->sendRealTime(status);
+    // Flush the driver's pending packet so clock is not held for its batch timer.
+    midi->send_now();
+    return;
+  }
+
+  switch (status) {
+  case 0xF1: // Time Code Quarter Frame
+    if (len >= 2) {
+      midi->sendTimeCodeQuarterFrame((data[1] >> 4) & 0x07, data[1] & 0x0F);
+    }
+    return;
+  case 0xF2: // Song Position (14-bit, LSB first)
+    if (len >= 3) {
+      midi->sendSongPosition(data[1] | (data[2] << 7));
+    }
+    return;
+  case 0xF3: // Song Select
+    if (len >= 2) {
+      midi->sendSongSelect(data[1]);
+    }
+    return;
+  case 0xF6: // Tune Request
+    midi->sendTuneRequest();
+    return;
+  default:
+    break;
+  }
+
   switch (msg_type) {
   case 0x80: // Note Off
     if (len >= 3) {

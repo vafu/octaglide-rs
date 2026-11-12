@@ -1,11 +1,10 @@
 use heapless::Vec;
-use log::info;
 use midi_msg::{Channel, ChannelVoiceMsg, MidiMsg};
 
 use crate::{
     anim::VoiceAnimators,
     app::MidiSender,
-    midi::MidiFmt,
+    midi::log_midi,
     ui::{UiConsumer, UiWriter},
 };
 
@@ -176,20 +175,7 @@ impl Core {
     }
 
     async fn send_raw(&mut self, msg: MidiMsg, tag: &'static str) {
-        log_msg("<<<", &msg);
+        log_midi("<<<", None, &msg);
         self.midi_sender.send(MidiOut { msg, tag }).await.ok();
-    }
-}
-
-fn log_msg(prefix: &str, msg: &MidiMsg) {
-    // Skip logging PitchBend to avoid noise
-    if !matches!(
-        msg,
-        MidiMsg::ChannelVoice {
-            msg: ChannelVoiceMsg::PitchBend { .. },
-            ..
-        }
-    ) {
-        info!("{} {}", prefix, MidiFmt(msg));
     }
 }

@@ -2,7 +2,6 @@ mod fmt;
 
 use enum_dispatch::enum_dispatch;
 use heapless::Deque;
-use log::info;
 use midi_msg::{MidiMsg, ReceiverContext};
 use teensy4_bsp::{hal::lpuart::Status, ral};
 
@@ -12,7 +11,7 @@ use crate::{
     usb::UsbMidiBus,
 };
 
-pub use fmt::MidiFmt;
+pub(crate) use fmt::log_midi;
 
 // TODO(octaglide-task-30): evaluate Elektron Turbo MIDI baud and buffer sizing.
 const MIDI_BUF_SIZE: usize = 32;
@@ -105,16 +104,7 @@ impl UartMidiBus {
     }
 
     pub fn send(&mut self, msg: &MidiMsg) {
-        // Skip logging PitchBend to avoid noise
-        if !matches!(
-            msg,
-            MidiMsg::ChannelVoice {
-                msg: midi_msg::ChannelVoiceMsg::PitchBend { .. },
-                ..
-            }
-        ) {
-            info!(">>> {}", MidiFmt(msg));
-        }
+        log_midi(">>>", None, msg);
 
         let bytes = msg.to_midi();
         let is_channel_msg = msg.is_channel_mode();
