@@ -26,10 +26,13 @@ fn panic(info: &PanicInfo) -> ! {
 }
 
 mod anim;
+mod app_event;
+mod calc;
 mod core;
 mod crashlog;
 mod midi;
 mod notes;
+mod output;
 mod state;
 mod ui;
 mod usb;
@@ -40,12 +43,16 @@ extern crate alloc;
 mod app {
 
     use crate::{
-        anim::{ANIMATORS_PER_VOICE, Cmd, VoiceAnimators, animator::AnimationEngine},
-        core::{Core, Input as CoreIn, MAX_VOICES, MidiOut},
-        midi::{Bus, MidiBus, log_midi, UartMidiBus},
+        app_event::{AppEvent, AppReceiver, AppSender},
+        core::{
+            AnimationEngine, Core, Cmd, VoiceAnimators, ANIMATORS_PER_VOICE,
+            MAX_VOICES,
+        },
+        midi::{Bus, MidiBus, MidiController, UartMidiBus},
+        output::{OutputMessage, OutputReceiver, OutputSender},
         ui::{
-            BUTTON_QUEUE_CAPACITY, ButtonEdge, ButtonReceiver, ButtonSender,
-            DisplaySnapshot, EncoderDecoder, UiReader,
+            ButtonEdge, ButtonReceiver, ButtonSender, Controller, DisplaySnapshot, EncoderDecoder,
+            UiReader, BUTTON_QUEUE_CAPACITY,
         },
         usb::UsbMidiBus,
     };
@@ -54,7 +61,7 @@ mod app {
     use imxrt_log as logging;
     use rtic_monotonics::systick::{Systick, *};
     use rtic_sync::{
-        channel::{Receiver, Sender},
+        channel::Sender,
         make_channel, make_signal,
     };
     use teensy_usbhost as usbhost;
@@ -74,11 +81,11 @@ mod app {
     };
 
     pub type MidiUart = Lpuart<Pins<pins::P20, pins::P21>, 8>;
-    pub type MidiSender = Sender<'static, MidiOut, MIDI_CHANNEL_CAPACITY>;
-    pub type MidiReceiver = Receiver<'static, MidiOut, MIDI_CHANNEL_CAPACITY>;
     pub type Animator = Sender<'static, Cmd, 1>;
-    pub type CoreSender = Sender<'static, CoreIn, CORE_INPUT_CHANNEL_CAPACITY>;
-    pub type CoreReceiver = Receiver<'static, CoreIn, CORE_INPUT_CHANNEL_CAPACITY>;
+    pub type CoreSender = AppSender;
+    pub type CoreReceiver = AppReceiver;
+    pub type MidiSender = OutputSender;
+    pub type MidiReceiver = OutputReceiver;
 
     // Each expansion reserves three distinct static channels for one voice.
     macro_rules! make_voice_animators {
@@ -102,8 +109,6 @@ mod app {
 
     const HEAP_SIZE: usize = 1024;
     const MIDI_BAUD: u32 = 31250;
-    const MIDI_CHANNEL_CAPACITY: usize = 16;
-    const CORE_INPUT_CHANNEL_CAPACITY: usize = 16;
     pub(crate) static mut POLLER: Option<logging::Poller> = None;
 
     #[shared]
@@ -193,9 +198,10 @@ mod app {
         log::set_max_level(configured_log_level());
         crashlog_dump::spawn().ok();
 
-        let (midi_sender, midi_receiver) = make_channel!(MidiOut, MIDI_CHANNEL_CAPACITY);
-        let (core_sender, core_receiver) = make_channel!(CoreIn, CORE_INPUT_CHANNEL_CAPACITY);
+        let (output_sender, output_receiver) = make_channel!(OutputMessage, 32);
+        let (core_sender, core_receiver) = make_channel!(AppEvent, 16);
         let (button_sender, button_receiver) = make_channel!(ButtonEdge, BUTTON_QUEUE_CAPACITY);
+        let midi_controller = MidiController::new();
 
         let (first, first_engines) = make_voice_animators!();
         let (second, second_engines) = make_voice_animators!();
@@ -203,7 +209,7 @@ mod app {
         let (fourth, fourth_engines) = make_voice_animators!();
         animate_voices::spawn(
             [first_engines, second_engines, third_engines, fourth_engines],
-            midi_sender.clone(),
+            output_sender.clone(),
         )
         .unwrap();
 
@@ -257,8 +263,8 @@ mod app {
         let (ui_writer, ui_reader) = make_signal!(DisplaySnapshot);
         oled_task::spawn(i2c, ui_reader).ok();
 
-        midi_dispatch::spawn(midi_receiver).unwrap();
-        core_task::spawn(core_receiver).unwrap();
+        midi_dispatch::spawn(output_receiver, midi_controller).unwrap();
+        core_task::spawn(core_receiver, output_sender.clone(), ui_writer).unwrap();
         usb_host_maintenance::spawn(core_sender.clone()).unwrap();
 
         // Create UART bus for RX
@@ -284,7 +290,7 @@ mod app {
             },
             Local {
                 led: board::led(&mut gpio2, pins.p13),
-                core: Core::new(midi_sender, [first, second, third, fourth], ui_writer),
+                core: Core::new(output_sender.clone(), [first, second, third, fourth]),
                 reset_btn,
                 button1,
                 button2,
@@ -320,12 +326,20 @@ mod app {
     }
 
     #[task(shared = [tx_bus], priority = 2)]
-    async fn midi_dispatch(mut cx: midi_dispatch::Context, mut r: MidiReceiver) -> ! {
+    async fn midi_dispatch(
+        mut cx: midi_dispatch::Context,
+        mut r: OutputReceiver,
+        controller: MidiController,
+    ) -> ! {
         loop {
-            let MidiOut { msg, tag } = r.recv().await.unwrap();
-            cx.shared.tx_bus.lock(|bus| {
-                log_midi(">>>", Some(tag), &msg);
-                bus.send(&msg);
+            let message = r.recv().await.unwrap();
+            cx.shared.tx_bus.lock(|bus| match message {
+                OutputMessage::Raw(msg) => bus.send(&msg),
+                OutputMessage::Semantic(output) => {
+                    if let Some(msg) = controller.encode(output) {
+                        bus.send(&msg);
+                    }
+                }
             });
         }
     }
@@ -342,11 +356,43 @@ mod app {
     }
 
     #[task(local = [core], priority = 1)]
-    async fn core_task(cx: core_task::Context, mut receiver: CoreReceiver) -> ! {
+    async fn core_task(
+        cx: core_task::Context,
+        mut receiver: CoreReceiver,
+        mut output: OutputSender,
+        ui_writer: crate::ui::UiWriter,
+    ) -> ! {
         let core = cx.local.core;
+        let mut ui = Controller::new(ui_writer, core.selected());
+        ui.publish(core.snapshot());
+        let midi = MidiController::new();
         loop {
-            if let Ok(input) = receiver.recv().await {
-                core.process(input).await;
+            let Ok(event) = receiver.recv().await else { continue };
+            match event {
+                AppEvent::Midi(msg) => {
+                    if let Some(inputs) = midi.translate(&msg) {
+                        for input in inputs {
+                            core.process(input).await;
+                        }
+                    } else {
+                        output.send(OutputMessage::Raw(msg)).await.ok();
+                    }
+                }
+                AppEvent::Ui(event) => {
+                    let snapshot = core.snapshot();
+                    let first_envelope = core.first_envelope_lane(core.selected().voice);
+                    let lane_count = core.lane_count(core.selected().voice);
+                    let outcome = ui.handle(event, snapshot, first_envelope, lane_count);
+                    if let Some(selection) = outcome.selection {
+                        if core.select(selection) {
+                            ui.reset_pickup();
+                        }
+                    }
+                    for input in outcome.updates {
+                        core.process(input).await;
+                    }
+                    ui.publish(core.snapshot());
+                }
             }
         }
     }

@@ -16,3 +16,4 @@ libm = "0.2.15"
 log = "0.4"
 midi-msg = { version = "0.8.1", default-features = false }
 rtic-sync = "1.4.0"
+rtic-monotonics = { version = "1", default-features = false, features = ["cortex-m-systick"] }

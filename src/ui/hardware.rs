@@ -6,7 +6,9 @@ use rtic_monotonics::{
 use super::{ButtonDebouncer, ButtonEdge, ButtonReceiver, ButtonSender, ENCODER_BUTTON_INDEX};
 use crate::{
     app::CoreSender,
-    core::{Input as CoreIn, normalize_adc_10bit},
+    app_event::AppEvent,
+    core::normalize_adc_10bit,
+    ui::UiEvent,
 };
 use teensy4_bsp::hal::gpio;
 
@@ -61,23 +63,23 @@ pub async fn run_buttons(mut receiver: ButtonReceiver, mut sender: CoreSender) -
             |edge| edge.at_ms,
         );
         while let Some(index) = super::buttons::take_next_release(&mut buttons, at_ms) {
-            sender.send(button_input(index as u8, false)).await.ok();
+            sender.send(AppEvent::Ui(button_input(index as u8, false))).await.ok();
         }
         if let Some(edge) = edge {
             if let Some(button) = buttons.get_mut(edge.index as usize)
                 && button.update(edge.at_ms, edge.pressed)
             {
-                sender.send(button_input(edge.index, true)).await.ok();
+                sender.send(AppEvent::Ui(button_input(edge.index, true))).await.ok();
             }
         }
     }
 }
 
-fn button_input(index: u8, pressed: bool) -> CoreIn {
+fn button_input(index: u8, pressed: bool) -> UiEvent {
     if index == ENCODER_BUTTON_INDEX {
-        CoreIn::EncoderClick { pressed }
+        UiEvent::EncoderClick { pressed }
     } else {
-        CoreIn::Button { index, pressed }
+        UiEvent::Button { index, pressed }
     }
 }
 
@@ -98,9 +100,9 @@ pub fn handle_encoder_interrupt(cx: crate::app::encoder_isr::Context<'_>) {
         if let Some(delta) = delta {
             cx.local
                 .enc_sender
-                .try_send(CoreIn::Encoder {
+                .try_send(AppEvent::Ui(UiEvent::Encoder {
                     increment: delta > 0,
-                })
+                }))
                 .ok();
         }
     }
@@ -129,11 +131,10 @@ pub async fn read_sliders(cx: crate::app::read_sliders::Context<'_>, mut sender:
                 *prev = value;
                 // readings has exactly four entries, so i is always 0..=3.
                 sender
-                    .send(CoreIn::Slider {
+                    .send(AppEvent::Ui(UiEvent::Slider {
                         index: i as u8,
                         value: normalize_adc_10bit(value),
-                        alternate: false,
-                    })
+                    }))
                     .await
                     .ok();
             }

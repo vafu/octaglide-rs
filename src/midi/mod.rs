@@ -1,17 +1,15 @@
 mod fmt;
+mod controller;
 
 use enum_dispatch::enum_dispatch;
 use heapless::Deque;
 use midi_msg::{MidiMsg, ReceiverContext};
 use teensy4_bsp::{hal::lpuart::Status, ral};
 
-use crate::{
-    app::{CoreSender, MidiUart},
-    core::Input as CoreIn,
-    usb::UsbMidiBus,
-};
+use crate::{app::MidiUart, app_event::AppSender, usb::UsbMidiBus};
 
 pub(crate) use fmt::log_midi;
+pub use controller::MidiController;
 
 // TODO(octaglide-task-30): evaluate Elektron Turbo MIDI baud and buffer sizing.
 const MIDI_BUF_SIZE: usize = 32;
@@ -42,14 +40,14 @@ pub struct UartMidiBus {
     rx_ctx: ReceiverContext,
     rx_buf: Deque<u8, MIDI_BUF_SIZE>,
 
-    core_sender: CoreSender,
+    app_sender: AppSender,
 }
 
 impl UartMidiBus {
-    pub fn new(uart: MidiUart, core_sender: CoreSender) -> Self {
+    pub fn new(uart: MidiUart, app_sender: AppSender) -> Self {
         Self {
             uart,
-            core_sender,
+            app_sender,
             tx_ctx: None,
             tx_buf: Deque::new(),
             rx_ctx: ReceiverContext::new(),
@@ -73,8 +71,7 @@ impl UartMidiBus {
 
                 match MidiMsg::from_midi_with_context(slice, &mut self.rx_ctx) {
                     Ok((msg, len)) => {
-                        let input = CoreIn::Midi(msg);
-                        if let Err(e) = self.core_sender.try_send(input) {
+                        if let Err(e) = self.app_sender.try_send(crate::app_event::AppEvent::Midi(msg)) {
                             log::error!("[MidiBus:CoreIn] {:?}", e);
                         }
                         self.drain_rx_queue(len);

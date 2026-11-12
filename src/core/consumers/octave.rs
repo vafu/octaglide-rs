@@ -1,17 +1,35 @@
-use midi_msg::{ChannelVoiceMsg, MidiMsg};
+use crate::core::{Input, OctaveState, OutputEvents, VoiceId, VoiceOutput};
 
-use crate::core::{Input, OctaveState, OutputEvents, control_to_i8};
+use super::{Consumer, CONTROL_SLOTS};
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum OctaveControl {
+    Shift,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum OctaveMode {
+    Normal,
+}
+
+impl OctaveMode {
+    pub const COUNT: u8 = 1;
+
+    pub const fn index(self) -> u8 {
+        0
+    }
+}
 
 #[derive(Debug)]
 pub struct Octave {
+    voice: VoiceId,
     settings: OctaveState,
-    ui_dirty: bool,
 }
 
 impl Octave {
-    pub fn new() -> Self {
+    pub fn new(voice: VoiceId) -> Self {
         Self {
-            ui_dirty: true,
+            voice,
             settings: OctaveState::INITIAL,
         }
     }
@@ -19,67 +37,84 @@ impl Octave {
     fn shifted_note(&self, note: u8) -> u8 {
         (note as i16 + self.settings.shift as i16).clamp(0, 127) as u8
     }
-}
 
-impl crate::ui::UiProvider for Octave {
-    type Model = crate::ui::OctaveUi;
-
-    fn ui_snapshot(&self) -> Self::Model {
-        crate::ui::OctaveUi {
-            shift: self.settings.shift,
+    pub(crate) fn set_control_slot(&mut self, slot: u8, value: f32) {
+        if let Some(control) = Self::CONTROL_MAP.get(slot as usize).copied().flatten() {
+            self.set_control(control, value);
         }
     }
-
-    fn has_updates(&mut self) -> bool {
-        core::mem::take(&mut self.ui_dirty)
-    }
 }
 
-impl super::Consumer for Octave {
+impl Consumer for Octave {
+    type Control = OctaveControl;
+    type Mode = OctaveMode;
+
+    const CONTROL_MAP: [Option<Self::Control>; CONTROL_SLOTS] = [
+        Some(OctaveControl::Shift),
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+    ];
+    const MODE_COUNT: u8 = 1;
+
     async fn consume(&mut self, input: &Input, out: &mut OutputEvents) -> bool {
         let before = self.settings;
-        let consumed = match input {
-            Input::Midi(original) => {
-                let (MidiMsg::ChannelVoice { msg, .. } | MidiMsg::RunningChannelVoice { msg, .. }) =
-                    original
-                else {
-                    return false;
-                };
-                let (ChannelVoiceMsg::NoteOn { note, .. } | ChannelVoiceMsg::NoteOff { note, .. }) =
-                    msg
-                else {
-                    return false;
-                };
-                let shifted = self.shifted_note(*note);
-                if shifted == *note {
-                    return false;
-                }
-                let mut replacement = original.clone();
-                if let MidiMsg::ChannelVoice { msg, .. }
-                | MidiMsg::RunningChannelVoice { msg, .. } = &mut replacement
+        let consumed = match *input {
+            Input::NoteOn { voice, note, velocity } if voice == self.voice => {
+                out.push(VoiceOutput::NoteOn {
+                    voice,
+                    note: self.shifted_note(note),
+                    velocity,
+                })
+                .is_ok()
+            }
+            Input::NoteOff { voice, note, velocity } if voice == self.voice => {
+                out.push(VoiceOutput::NoteOff {
+                    voice,
+                    note: self.shifted_note(note),
+                    velocity,
+                })
+                .is_ok()
+            }
+            Input::ControlUpdate { voice, control, value, .. } if voice == self.voice => {
+                if Self::CONTROL_MAP
+                    .get(control as usize)
+                    .copied()
+                    .flatten()
+                    .is_some()
                 {
-                    match msg {
-                        ChannelVoiceMsg::NoteOn { note, .. }
-                        | ChannelVoiceMsg::NoteOff { note, .. } => *note = shifted,
-                        _ => unreachable!(),
-                    }
+                    self.settings.shift = libm::roundf((value.clamp(0.0, 1.0) * 84.0) - 48.0) as i8;
+                    true
+                } else {
+                    false
                 }
-                out.push(replacement).is_ok()
-            }
-            Input::Slider {
-                index: 3, value, ..
-            } => {
-                self.settings.shift = control_to_i8(*value, -48, 36);
-                true
-            }
-            Input::Encoder { increment } => {
-                let step = if *increment { 1 } else { -1 };
-                self.settings.shift = (self.settings.shift as i32 + step * 12).clamp(-48, 36) as i8;
-                true
             }
             _ => false,
         };
-        self.ui_dirty |= self.settings != before;
-        consumed
+        self.settings != before || consumed
     }
+
+    fn set_control(&mut self, control: Self::Control, value: f32) {
+        if control == OctaveControl::Shift {
+            self.settings.shift = libm::roundf((value.clamp(0.0, 1.0) * 84.0) - 48.0) as i8;
+        }
+    }
+
+    fn control_value(&self, control: Self::Control) -> f32 {
+        if control == OctaveControl::Shift {
+            (self.settings.shift as f32 + 48.0) / 84.0
+        } else {
+            0.0
+        }
+    }
+
+    fn mode(&self) -> Self::Mode {
+        OctaveMode::Normal
+    }
+
+    fn update_mode(&mut self, _direction: i8) {}
 }

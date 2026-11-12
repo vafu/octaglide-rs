@@ -1,15 +1,11 @@
 use futures::FutureExt;
 use log::debug;
-use midi_msg::{Channel, ChannelVoiceMsg, ControlChange, MidiMsg};
-use rtic_monotonics::{
-    Monotonic,
-    systick::{ExtU32, Systick, fugit::Instant},
-};
+use rtic_monotonics::{Monotonic, systick::{Systick, fugit::Instant}};
+#[cfg(target_os = "none")]
+use rtic_monotonics::systick::ExtU32;
 use rtic_sync::channel::Receiver;
 
-use crate::anim::modulators::{Messages, Modulator};
-
-use super::{Cmd, modulators::Modulation};
+use super::{Messages, Modulation, Modulator, VoiceOutput};
 
 #[derive(Debug)]
 pub struct AnimationEngine {
@@ -18,7 +14,7 @@ pub struct AnimationEngine {
     state: State,
     _depth: f32,
     modulator: Option<Modulator>,
-    last_continuous: heapless::Vec<MidiMsg, DEDUPE_SLOTS>,
+    last_continuous: heapless::Vec<VoiceOutput, DEDUPE_SLOTS>,
 }
 
 #[derive(Debug)]
@@ -48,7 +44,6 @@ impl AnimationEngine {
     pub async fn tick(&mut self) -> Messages {
         match self.state {
             State::Idle => self.recv_cmd().await,
-
             State::Animating {
                 last_updated,
                 progress_at: progress,
@@ -60,7 +55,7 @@ impl AnimationEngine {
 
                 futures::select_biased! {
                     new_msg = self.recv_cmd().fuse() => new_msg,
-                    _ = Systick::delay(MSG_INTERVAL_MS.millis()).fuse() => {
+                    _ = animation_delay().fuse() => {
                         let now = Systick::now();
                         let elapsed = now - last_updated;
                         let progress_delta = if duration == 0 { 1.0 } else { elapsed.to_millis() as f32 / duration as f32 };
@@ -88,40 +83,33 @@ impl AnimationEngine {
 
     fn dedupe_messages(&mut self, messages: Messages) -> Messages {
         let mut output = heapless::Vec::new();
-
         for msg in messages? {
             if self.is_duplicate_continuous(&msg) {
                 continue;
             }
             let _ = output.push(msg);
         }
-
-        if output.is_empty() {
-            None
-        } else {
-            Some(output)
-        }
+        if output.is_empty() { None } else { Some(output) }
     }
 
-    fn is_duplicate_continuous(&mut self, msg: &MidiMsg) -> bool {
+    fn is_duplicate_continuous(&mut self, msg: &VoiceOutput) -> bool {
         let Some(pos) = self
             .last_continuous
             .iter()
             .position(|last| same_continuous_target(last, msg))
         else {
             if is_continuous(msg) {
-                if self.last_continuous.push(msg.clone()).is_err() {
+                if self.last_continuous.push(*msg).is_err() {
                     self.last_continuous.remove(0);
-                    let _ = self.last_continuous.push(msg.clone());
+                    let _ = self.last_continuous.push(*msg);
                 }
             }
             return false;
         };
-
         if self.last_continuous[pos] == *msg {
             true
         } else {
-            self.last_continuous[pos] = msg.clone();
+            self.last_continuous[pos] = *msg;
             false
         }
     }
@@ -135,24 +123,20 @@ impl AnimationEngine {
             Cmd::Start(modulator) => {
                 self.last_continuous.clear();
                 let mut messages = if let Some(old_mod) = self.modulator.as_mut() {
-                    // resetting at start causes 2 identical messages (with 0 "reset" value) sent.
                     old_mod.reset().await.unwrap_or(heapless::Vec::new())
                 } else {
                     heapless::Vec::new()
                 };
-
                 self.state = State::Animating {
                     last_updated: Systick::now(),
                     progress_at: 0.0,
                 };
                 self.modulator = Some(modulator);
-
                 if let Some(new_msgs) = self.modulator.as_mut()?.animate(0.0, 0.0, 0.0).await {
                     for msg in new_msgs {
                         let _ = messages.push(msg);
                     }
                 }
-
                 self.dedupe_messages(Some(messages))
             }
             Cmd::Update(settings) => {
@@ -177,64 +161,49 @@ impl AnimationEngine {
     }
 }
 
-fn is_continuous(msg: &MidiMsg) -> bool {
-    let Some((_, voice)) = channel_voice(msg) else {
-        return false;
-    };
-
-    matches!(
-        voice,
-        ChannelVoiceMsg::ControlChange {
-            control: ControlChange::CC { .. } | ControlChange::CCHighRes { .. }
-        } | ChannelVoiceMsg::PitchBend { .. }
-    )
+async fn animation_delay() {
+    #[cfg(target_os = "none")]
+    Systick::delay(MSG_INTERVAL_MS.millis()).await;
+    #[cfg(not(target_os = "none"))]
+    core::future::pending::<()>().await;
 }
 
-fn same_continuous_target(a: &MidiMsg, b: &MidiMsg) -> bool {
-    let (Some((a_channel, a_voice)), Some((b_channel, b_voice))) =
-        (channel_voice(a), channel_voice(b))
-    else {
-        return false;
-    };
-
-    if a_channel != b_channel {
-        return false;
-    }
-
-    match (a_voice, b_voice) {
-        (
-            ChannelVoiceMsg::ControlChange { control: a_control },
-            ChannelVoiceMsg::ControlChange { control: b_control },
-        ) => same_control_target(a_control, b_control),
-        (ChannelVoiceMsg::PitchBend { .. }, ChannelVoiceMsg::PitchBend { .. }) => true,
-        _ => false,
-    }
+fn is_continuous(msg: &VoiceOutput) -> bool {
+    matches!(msg, VoiceOutput::Control { .. } | VoiceOutput::PitchBend { .. })
 }
 
-fn channel_voice(msg: &MidiMsg) -> Option<(Channel, &ChannelVoiceMsg)> {
-    match msg {
-        MidiMsg::ChannelVoice { channel, msg } | MidiMsg::RunningChannelVoice { channel, msg } => {
-            Some((*channel, msg))
-        }
-        _ => None,
-    }
-}
-
-fn same_control_target(a: &ControlChange, b: &ControlChange) -> bool {
+fn same_continuous_target(a: &VoiceOutput, b: &VoiceOutput) -> bool {
     match (a, b) {
-        (ControlChange::CC { control: a, .. }, ControlChange::CC { control: b, .. }) => a == b,
         (
-            ControlChange::CCHighRes {
-                control1: a1,
-                control2: a2,
-                ..
-            },
-            ControlChange::CCHighRes {
-                control1: b1,
-                control2: b2,
-                ..
-            },
-        ) => a1 == b1 && a2 == b2,
+            VoiceOutput::Control { voice: a_voice, slot: a_slot, .. },
+            VoiceOutput::Control { voice: b_voice, slot: b_slot, .. },
+        ) => a_voice == b_voice && a_slot == b_slot,
+        (
+            VoiceOutput::PitchBend { voice: a_voice, .. },
+            VoiceOutput::PitchBend { voice: b_voice, .. },
+        ) => a_voice == b_voice,
         _ => false,
     }
+}
+
+/// One glide engine and two envelope engines per voice.
+pub const ANIMATORS_PER_VOICE: usize = 3;
+
+#[derive(Debug)]
+pub struct VoiceAnimators {
+    pub glide: crate::app::Animator,
+    pub envelopes: [crate::app::Animator; 2],
+}
+
+#[derive(Debug)]
+pub enum Cmd {
+    Start(Modulator),
+    Update(Settings),
+    Stop,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub enum Settings {
+    Envelope(crate::state::EnvelopeState),
+    Glide(crate::state::GlideState),
 }

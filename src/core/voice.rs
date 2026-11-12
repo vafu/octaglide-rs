@@ -1,49 +1,16 @@
-use midi_msg::MidiMsg;
-
-use super::{
-    Input, MidiOut, OutputEvents, Voice,
-    consumers::{Consumer, Consumers},
-};
+use super::{Consumer, Consumers, Input, OutputEvents, Voice, VoiceOutput};
 
 impl Voice {
-    /// Musical MIDI always runs voicing processors before all modulation lanes.
-    pub(super) async fn process_midi(&mut self, msg: MidiMsg) {
+    pub(super) async fn process_input(&mut self, input: Input) -> OutputEvents {
         let chain = self.voicing.iter_mut().chain(self.modulations.iter_mut());
-        for msg in run_chain(chain, Input::Midi(msg)).await {
-            self.send_midi(msg).await;
-        }
+        run_chain(chain, input).await
     }
 
-    /// Hardware edits target one modulation lane; generated MIDI continues onward.
-    pub(super) async fn process_lane(&mut self, lane: usize, input: Input) {
+    pub(super) async fn process_lane(&mut self, lane: usize, input: Input) -> OutputEvents {
         let Some(chain) = self.modulations.get_mut(lane..) else {
-            return;
+            return OutputEvents::new();
         };
-        for msg in run_chain(chain.iter_mut(), input).await {
-            self.send_midi(msg).await;
-        }
-    }
-
-    async fn send_midi(&mut self, msg: MidiMsg) {
-        let msg = match msg {
-            MidiMsg::ChannelVoice { msg, .. } | MidiMsg::RunningChannelVoice { msg, .. } => {
-                MidiMsg::ChannelVoice {
-                    channel: self.output_channel,
-                    msg,
-                }
-            }
-            MidiMsg::ChannelMode { msg, .. } | MidiMsg::RunningChannelMode { msg, .. } => {
-                MidiMsg::ChannelMode {
-                    channel: self.output_channel,
-                    msg,
-                }
-            }
-            other => other,
-        };
-        self.midi_sender
-            .send(MidiOut { msg, tag: "voice" })
-            .await
-            .ok();
+        run_chain(chain.iter_mut(), input).await
     }
 }
 
@@ -60,27 +27,49 @@ async fn run_chain<'a>(
                 break;
             }
             for msg in core::mem::take(&mut current) {
-                dispatch_consumer(consumer, Input::Midi(msg), &mut next).await;
+                if let Some(input) = output_to_input(msg) {
+                    dispatch_consumer(consumer, input, &mut next).await;
+                } else {
+                    next.push(msg).ok();
+                }
             }
             core::mem::swap(&mut current, &mut next);
         }
-    } else if let Input::Midi(msg) = input {
-        current.push(msg).ok();
+    } else {
+        if let Some(output) = input_to_output(input) {
+            current.push(output).ok();
+        }
     }
     current
 }
 
-/// Keep generated messages, then append the original MIDI if it was not consumed.
-/// The borrowed input lets a consumer inspect it without cloning it just to pass.
-pub(super) async fn dispatch_consumer<C: Consumer>(
-    consumer: &mut C,
+fn dispatch_consumer<'a, C: Consumer>(
+    consumer: &'a mut C,
     input: Input,
-    out: &mut OutputEvents,
-) {
-    let consumed = consumer.consume(&input, out).await;
-    if !consumed && let Input::Midi(msg) = input {
-        if out.push(msg).is_err() {
-            log::error!("Voice MIDI output capacity exceeded");
+    out: &'a mut OutputEvents,
+) -> impl core::future::Future<Output = ()> + 'a {
+    async move {
+        let consumed = consumer.consume(&input, out).await;
+        if !consumed && let Some(output) = input_to_output(input) {
+            if out.push(output).is_err() {
+                log::error!("Voice output capacity exceeded");
+            }
         }
+    }
+}
+
+fn input_to_output(input: Input) -> Option<VoiceOutput> {
+    match input {
+        Input::NoteOn { voice, note, velocity } => Some(VoiceOutput::NoteOn { voice, note, velocity }),
+        Input::NoteOff { voice, note, velocity } => Some(VoiceOutput::NoteOff { voice, note, velocity }),
+        _ => None,
+    }
+}
+
+fn output_to_input(output: VoiceOutput) -> Option<Input> {
+    match output {
+        VoiceOutput::NoteOn { voice, note, velocity } => Some(Input::NoteOn { voice, note, velocity }),
+        VoiceOutput::NoteOff { voice, note, velocity } => Some(Input::NoteOff { voice, note, velocity }),
+        _ => None,
     }
 }

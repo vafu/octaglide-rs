@@ -1,6 +1,6 @@
 //! Initial settings owned by individual consumers.
 
-use super::{EnvelopeStageState, EnvelopeState, GlideState, OctaveState};
+use super::{EnvelopeMode, EnvelopeStageState, EnvelopeState, GlideState, OctaveState};
 
 impl EnvelopeState {
     /// Initial settings for a newly configured consumer.
@@ -18,7 +18,7 @@ impl EnvelopeState {
             curve: 64,
         },
         sustain: 80,
-        mode: 0,
+        mode: EnvelopeMode::Ad,
     };
 }
 

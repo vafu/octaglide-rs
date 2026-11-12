@@ -1,4 +1,4 @@
-use crate::{app::CoreSender, core::Input};
+use crate::{app::CoreSender, app_event::AppEvent, ui::UiEvent};
 use rtic_monotonics::systick::{ExtU32, Systick};
 use teensy_usbhost as usbhost;
 
@@ -26,7 +26,9 @@ pub async fn run_host(mut sender: CoreSender) -> ! {
         }
         let connected = usbhost::midi_connected();
         if reported != Some(connected)
-            && sender.try_send(Input::UsbConnection { connected }).is_ok()
+            && sender
+                .try_send(AppEvent::Ui(UiEvent::UsbConnection { connected }))
+                .is_ok()
         {
             reported = Some(connected);
             if connected {
