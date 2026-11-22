@@ -2,7 +2,7 @@ use heapless::Vec;
 
 use crate::output::{OutputMessage, OutputSender};
 
-use super::consumers::{Glider, ModTrigger, Octave};
+use super::consumers::{Glider, ModTrigger, Octave, Passthrough};
 use super::{
     Consumers, Core, Input, MAX_VOICES, Selection, Voice, VoiceAnimators, VoiceId, VoiceOutput,
 };
@@ -29,8 +29,8 @@ impl Core {
                         Consumers::Glider(Glider::new(id, resources.glide)),
                     ],
                     modulations: [
-                        Consumers::Passthrough,
-                        Consumers::Passthrough,
+                        Consumers::Passthrough(Passthrough),
+                        Consumers::Passthrough(Passthrough),
                         Consumers::ModTrigger(ModTrigger::new(id, 0, first_envelope)),
                         Consumers::ModTrigger(ModTrigger::new(id, 1, second_envelope)),
                     ],

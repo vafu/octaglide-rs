@@ -23,6 +23,17 @@ pub struct Glider {
 }
 
 impl Glider {
+    const CONTROL_MAP: [Option<GliderControl>; CONTROL_SLOTS] = [
+        Some(GliderControl::Enabled),
+        Some(GliderControl::NoteOnVelocity),
+        Some(GliderControl::BendRange),
+        Some(GliderControl::Duration),
+        None,
+        None,
+        None,
+        None,
+    ];
+
     pub fn new(voice_id: VoiceId, animator: Animator) -> Self {
         Self {
             voice_id,
@@ -44,6 +55,14 @@ impl Glider {
                 self.settings.note_on_velocity =
                     libm::roundf(1.0 + value.clamp(0.0, 1.0) * 126.0) as u8
             }
+        }
+    }
+
+    fn mode(&self) -> GlideMode {
+        if self.settings.enabled {
+            GlideMode::Enabled
+        } else {
+            GlideMode::Disabled
         }
     }
 
@@ -112,21 +131,6 @@ impl Glider {
 }
 
 impl Consumer for Glider {
-    type Control = GliderControl;
-    type Mode = GlideMode;
-
-    const CONTROL_MAP: [Option<Self::Control>; CONTROL_SLOTS] = [
-        Some(GliderControl::Enabled),
-        Some(GliderControl::NoteOnVelocity),
-        Some(GliderControl::BendRange),
-        Some(GliderControl::Duration),
-        None,
-        None,
-        None,
-        None,
-    ];
-    const MODE_COUNT: u8 = GlideMode::COUNT;
-
     async fn consume(&mut self, input: &Input, _out: &mut OutputEvents) -> bool {
         let before = self.settings;
         let consumed = match *input {
@@ -159,16 +163,22 @@ impl Consumer for Glider {
         consumed
     }
 
-    fn set_control(&mut self, control: Self::Control, value: f32) {
-        self.set(control, value);
+    fn set_control_slot(&mut self, slot: u8, value: f32) {
+        if let Some(control) = Self::CONTROL_MAP.get(slot as usize).copied().flatten() {
+            self.set(control, value);
+        }
     }
 
-    fn control_value(&self, control: Self::Control) -> f32 {
-        self.get(control)
+    fn control_slot_value(&self, slot: u8) -> Option<f32> {
+        Self::CONTROL_MAP
+            .get(slot as usize)
+            .copied()
+            .flatten()
+            .map(|control| self.get(control))
     }
 
-    fn mode(&self) -> Self::Mode {
-        if self.settings.enabled { GlideMode::Enabled } else { GlideMode::Disabled }
+    fn mode_index(&self) -> u8 {
+        self.mode().index()
     }
 
     fn update_mode(&mut self, direction: i8) {

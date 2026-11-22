@@ -7,19 +7,6 @@ pub enum OctaveControl {
     Shift,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum OctaveMode {
-    Normal,
-}
-
-impl OctaveMode {
-    pub const COUNT: u8 = 1;
-
-    pub const fn index(self) -> u8 {
-        0
-    }
-}
-
 #[derive(Debug)]
 pub struct Octave {
     voice: VoiceId,
@@ -38,18 +25,7 @@ impl Octave {
         (note as i16 + self.settings.shift as i16).clamp(0, 127) as u8
     }
 
-    pub(crate) fn set_control_slot(&mut self, slot: u8, value: f32) {
-        if let Some(control) = Self::CONTROL_MAP.get(slot as usize).copied().flatten() {
-            self.set_control(control, value);
-        }
-    }
-}
-
-impl Consumer for Octave {
-    type Control = OctaveControl;
-    type Mode = OctaveMode;
-
-    const CONTROL_MAP: [Option<Self::Control>; CONTROL_SLOTS] = [
+    const CONTROL_MAP: [Option<OctaveControl>; CONTROL_SLOTS] = [
         Some(OctaveControl::Shift),
         None,
         None,
@@ -59,8 +35,9 @@ impl Consumer for Octave {
         None,
         None,
     ];
-    const MODE_COUNT: u8 = 1;
+}
 
+impl Consumer for Octave {
     async fn consume(&mut self, input: &Input, out: &mut OutputEvents) -> bool {
         let before = self.settings;
         let consumed = match *input {
@@ -98,23 +75,19 @@ impl Consumer for Octave {
         self.settings != before || consumed
     }
 
-    fn set_control(&mut self, control: Self::Control, value: f32) {
-        if control == OctaveControl::Shift {
+    fn set_control_slot(&mut self, slot: u8, value: f32) {
+        if let Some(OctaveControl::Shift) =
+            Self::CONTROL_MAP.get(slot as usize).copied().flatten()
+        {
             self.settings.shift = libm::roundf((value.clamp(0.0, 1.0) * 84.0) - 48.0) as i8;
         }
     }
 
-    fn control_value(&self, control: Self::Control) -> f32 {
-        if control == OctaveControl::Shift {
-            (self.settings.shift as f32 + 48.0) / 84.0
-        } else {
-            0.0
-        }
+    fn control_slot_value(&self, slot: u8) -> Option<f32> {
+        matches!(
+            Self::CONTROL_MAP.get(slot as usize).copied().flatten(),
+            Some(OctaveControl::Shift)
+        )
+        .then_some((self.settings.shift as f32 + 48.0) / 84.0)
     }
-
-    fn mode(&self) -> Self::Mode {
-        OctaveMode::Normal
-    }
-
-    fn update_mode(&mut self, _direction: i8) {}
 }

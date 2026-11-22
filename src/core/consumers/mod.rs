@@ -1,3 +1,5 @@
+use enum_dispatch::enum_dispatch;
+
 use crate::core::{Input, OutputEvents};
 
 mod dispatch;
@@ -5,32 +7,37 @@ pub(crate) mod envelope;
 pub(crate) mod glide;
 mod octave;
 
-pub use self::envelope::{ModTrigger, ModTriggerControl};
-pub use self::glide::{Glider, GliderControl};
-pub use self::octave::{Octave, OctaveControl, OctaveMode};
+pub use self::envelope::ModTrigger;
+pub use self::glide::Glider;
+pub use self::octave::Octave;
+pub use self::passthrough::Passthrough;
 
 pub const CONTROL_SLOTS: usize = 8;
 
+mod passthrough;
+
 /// Processes semantic input independently of MIDI, hardware, or display.
+#[enum_dispatch]
 pub trait Consumer {
-    type Control: Copy;
-    type Mode: Copy;
-
-    const CONTROL_MAP: [Option<Self::Control>; CONTROL_SLOTS];
-    const MODE_COUNT: u8;
-
     async fn consume(&mut self, input: &Input, out: &mut OutputEvents) -> bool;
-    fn set_control(&mut self, control: Self::Control, value: f32);
-    fn control_value(&self, control: Self::Control) -> f32;
-    fn mode(&self) -> Self::Mode;
-    fn update_mode(&mut self, direction: i8);
+    fn set_control_slot(&mut self, _slot: u8, _value: f32) {}
+    fn control_slot_value(&self, _slot: u8) -> Option<f32> {
+        None
+    }
+    fn mode_index(&self) -> u8 {
+        0
+    }
+    fn update_mode(&mut self, _direction: i8) {}
+    fn output_slot(&self) -> u8 {
+        0
+    }
 }
 
 /// Consumer instances.
+#[enum_dispatch(Consumer)]
 #[derive(Debug)]
 pub enum Consumers {
-    /// An inert modulation lane; Voice still sends semantic events left by the chain.
-    Passthrough,
+    Passthrough(Passthrough),
     Octave(Octave),
     ModTrigger(ModTrigger),
     Glider(Glider),

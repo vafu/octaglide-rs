@@ -1,10 +1,7 @@
 use super::{Consumer, EnvelopeMode, Input, Selection, VoiceId, VoiceOutput};
 use crate::{
     calc,
-    core::{
-        Cmd, Settings,
-        consumers::{ModTrigger, ModTriggerControl},
-    },
+    core::{Cmd, Settings, consumers::ModTrigger},
     output::OutputMessage,
 };
 use futures::executor::block_on;
@@ -52,10 +49,6 @@ fn semantic_control_slots_map_to_envelope_controls() {
             )
             .await;
         assert_eq!(envelope.control_slot_value(0), Some(1.0));
-        assert_eq!(
-            envelope.control_value(ModTriggerControl::ReleaseDuration),
-            1.0
-        );
         assert!(matches!(
             commands.recv().await,
             Ok(Cmd::Update(Settings::Envelope(_)))

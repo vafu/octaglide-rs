@@ -50,19 +50,16 @@ impl ModTrigger {
         self.output_slot
     }
 
-    pub(crate) fn set_control_slot(&mut self, slot: u8, value: f32) {
-        if let Some(control) = Self::CONTROL_MAP.get(slot as usize).copied().flatten() {
-            self.set(control, value);
-        }
-    }
-
-    pub(crate) fn control_slot_value(&self, slot: u8) -> Option<f32> {
-        Self::CONTROL_MAP
-            .get(slot as usize)
-            .copied()
-            .flatten()
-            .map(|control| self.get(control))
-    }
+    const CONTROL_MAP: [Option<ModTriggerControl>; CONTROL_SLOTS] = [
+        Some(ModTriggerControl::ReleaseDuration),
+        Some(ModTriggerControl::Sustain),
+        Some(ModTriggerControl::DecayDuration),
+        Some(ModTriggerControl::AttackDuration),
+        Some(ModTriggerControl::ReleaseCurve),
+        Some(ModTriggerControl::DecayCurve),
+        Some(ModTriggerControl::AttackCurve),
+        None,
+    ];
 
     fn set(&mut self, control: ModTriggerControl, value: f32) {
         let value = normalized_to_u8(value);
@@ -92,21 +89,6 @@ impl ModTrigger {
 }
 
 impl Consumer for ModTrigger {
-    type Control = ModTriggerControl;
-    type Mode = EnvelopeMode;
-
-    const CONTROL_MAP: [Option<Self::Control>; CONTROL_SLOTS] = [
-        Some(ModTriggerControl::ReleaseDuration),
-        Some(ModTriggerControl::Sustain),
-        Some(ModTriggerControl::DecayDuration),
-        Some(ModTriggerControl::AttackDuration),
-        Some(ModTriggerControl::ReleaseCurve),
-        Some(ModTriggerControl::DecayCurve),
-        Some(ModTriggerControl::AttackCurve),
-        None,
-    ];
-    const MODE_COUNT: u8 = EnvelopeMode::COUNT;
-
     async fn consume(&mut self, input: &Input, _out: &mut OutputEvents) -> bool {
         let before = self.settings;
         let consumed = match *input {
@@ -142,20 +124,30 @@ impl Consumer for ModTrigger {
         consumed
     }
 
-    fn set_control(&mut self, control: Self::Control, value: f32) {
-        self.set(control, value);
+    fn set_control_slot(&mut self, slot: u8, value: f32) {
+        if let Some(control) = Self::CONTROL_MAP.get(slot as usize).copied().flatten() {
+            self.set(control, value);
+        }
     }
 
-    fn control_value(&self, control: Self::Control) -> f32 {
-        self.get(control)
+    fn control_slot_value(&self, slot: u8) -> Option<f32> {
+        Self::CONTROL_MAP
+            .get(slot as usize)
+            .copied()
+            .flatten()
+            .map(|control| self.get(control))
     }
 
-    fn mode(&self) -> Self::Mode {
-        self.settings.mode
+    fn mode_index(&self) -> u8 {
+        self.settings.mode.index()
     }
 
     fn update_mode(&mut self, direction: i8) {
         self.settings.mode = self.settings.mode.step(direction);
+    }
+
+    fn output_slot(&self) -> u8 {
+        self.output_slot
     }
 }
 
