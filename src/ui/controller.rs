@@ -105,9 +105,10 @@ impl Controller {
                 let Some(slot_index) = (index as usize).checked_sub(0).filter(|i| *i < 4) else {
                     return outcome;
                 };
-                self.sliders[slot_index] = Some(value);
                 let alternate = self.encoder_held;
-                let slot = index + if alternate { 4 } else { 0 };
+                let Some(slot) = control_slot(slot_index, alternate) else {
+                    return outcome;
+                };
                 let target = snapshot
                     .as_ref()
                     .and_then(|snapshot| snapshot.controls.get(slot as usize).copied().flatten());
@@ -200,7 +201,12 @@ impl Controller {
             self.picked_up[index][bank] = true;
             return true;
         }
-        let target = (target.unwrap().clamp(0.0, 1.0) * u16::MAX as f32) as u16;
+        // Compare in the consumer's 7-bit domain: the stored setting is a u8,
+        // so a u16 round-trip re-arms pickup on a one-count difference.
+        let target = libm::roundf(target.unwrap().clamp(0.0, 1.0) * 127.0) as u8;
+        let value = libm::roundf(value as f32 * 127.0 / u16::MAX as f32) as u8;
+        let previous =
+            previous.map(|previous| libm::roundf(previous as f32 * 127.0 / u16::MAX as f32) as u8);
         if self.picked_up[index][bank] && previous.is_some_and(|value| value != target) {
             self.picked_up[index][bank] = false;
         }
@@ -215,5 +221,20 @@ impl Controller {
             self.picked_up[index][bank] = true;
         }
         true
+    }
+}
+
+/// Physical sliders are Release, Sustain, Decay, Attack. The alternate bank
+/// reuses Release/Decay/Attack for their curves; Sustain edits Sustain.
+fn control_slot(index: usize, alternate: bool) -> Option<u8> {
+    if !alternate {
+        return Some(index as u8);
+    }
+    match index {
+        0 => Some(4),
+        1 => Some(1),
+        2 => Some(5),
+        3 => Some(6),
+        _ => None,
     }
 }
