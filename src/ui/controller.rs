@@ -23,12 +23,6 @@ pub enum UiEvent {
     UsbConnection { connected: bool },
 }
 
-pub struct UiOutcome {
-    pub selection: Option<Selection>,
-    pub updates: Vec<Input, MAX_VOICES>,
-    pub publish: bool,
-}
-
 pub struct Controller {
     writer: UiWriter,
     tracks: [Track; MAX_VOICES],
@@ -72,6 +66,10 @@ impl Controller {
         self.picked_up = [[false; 2]; 4];
     }
 
+    pub fn selected(&self) -> Selection {
+        self.selected
+    }
+
     pub fn publish(&mut self, snapshot: Option<ConsumerSnapshot>) {
         let track = self
             .tracks
@@ -94,29 +92,24 @@ impl Controller {
         snapshot: Option<ConsumerSnapshot>,
         first_envelope_lane: Option<usize>,
         lane_count: Option<usize>,
-    ) -> UiOutcome {
-        let mut outcome = UiOutcome {
-            selection: None,
-            updates: Vec::new(),
-            publish: false,
-        };
+    ) -> Vec<Input, MAX_VOICES> {
+        let mut updates = Vec::new();
         match event {
             UiEvent::Slider { index, value } => {
                 let Some(slot_index) = (index as usize).checked_sub(0).filter(|i| *i < 4) else {
-                    return outcome;
+                    return updates;
                 };
                 let alternate = self.encoder_held;
                 let Some(slot) = control_slot(slot_index, alternate) else {
-                    return outcome;
+                    return updates;
                 };
                 let target = snapshot
                     .as_ref()
                     .and_then(|snapshot| snapshot.controls.get(slot as usize).copied().flatten());
                 if !self.accept_slider(slot_index, alternate, value, target) {
-                    return outcome;
+                    return updates;
                 }
-                outcome
-                    .updates
+                updates
                     .push(Input::ControlUpdate {
                         voice: self.selected.voice,
                         lane: self.selected.lane,
@@ -124,18 +117,15 @@ impl Controller {
                         value: value as f32 / u16::MAX as f32,
                     })
                     .ok();
-                outcome.publish = true;
             }
             UiEvent::Encoder { increment } => {
-                outcome
-                    .updates
+                updates
                     .push(Input::ModeUpdate {
                         voice: self.selected.voice,
                         lane: self.selected.lane,
                         direction: if increment { 1 } else { -1 },
                     })
                     .ok();
-                outcome.publish = true;
             }
             UiEvent::EncoderClick { pressed } => {
                 self.encoder_held = pressed;
@@ -165,13 +155,13 @@ impl Controller {
                         if let Some(track) = self.tracks.get(index as usize) {
                             if let Some(&voice) = track.voices[..track.count as usize].first() {
                                 if let Some(lane) = first_envelope_lane {
-                                    outcome.selection = Some(Selection { voice, lane });
+                                    self.select(Selection { voice, lane });
                                 }
                             }
                         }
                     } else if lane && !captured && !self.encoder_held {
                         if lane_count.is_some_and(|count| (index as usize) < count) {
-                            outcome.selection = Some(Selection {
+                            self.select(Selection {
                                 voice: self.selected.voice,
                                 lane: index as usize,
                             });
@@ -181,11 +171,19 @@ impl Controller {
             }
             UiEvent::UsbConnection { connected } => {
                 self.usb_connected = connected;
-                outcome.publish = true;
             }
             _ => {}
         }
-        outcome
+        updates
+    }
+
+    /// Adopt a gesture's selection. Invalid selections are ignored.
+    fn select(&mut self, selection: Selection) {
+        if self.selected == selection {
+            return;
+        }
+        self.selected = selection;
+        self.reset_pickup();
     }
 
     fn accept_slider(

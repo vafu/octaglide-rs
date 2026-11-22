@@ -11,7 +11,6 @@ mod hardware;
 mod snapshot;
 
 pub use controller::{Controller, UiEvent};
-pub use snapshot::model;
 pub(crate) use envelope_plot::envelope_plot_level;
 #[cfg(target_os = "none")]
 pub use display::run_envelope_display;

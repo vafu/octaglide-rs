@@ -4,7 +4,7 @@ use crate::output::{OutputMessage, OutputSender};
 
 use super::consumers::{Glider, ModTrigger, Octave, Passthrough};
 use super::{
-    Consumers, Core, Input, MAX_VOICES, Selection, Voice, VoiceAnimators, VoiceId, VoiceOutput,
+    Consumers, Core, Input, MAX_VOICES, Voice, VoiceAnimators, VoiceId, VoiceOutput,
 };
 
 macro_rules! vec {
@@ -40,8 +40,6 @@ impl Core {
         Core {
             voices,
             output,
-            selected_voice: VoiceId(0),
-            selected_lane: 2,
         }
     }
 
@@ -62,30 +60,11 @@ impl Core {
         }
     }
 
-    pub fn selected(&self) -> Selection {
-        Selection {
-            voice: self.selected_voice,
-            lane: self.selected_lane,
-        }
-    }
-
-    pub fn select(&mut self, selection: Selection) -> bool {
-        let Some(voice) = self.voices.iter().find(|voice| voice.id == selection.voice) else {
-            return false;
-        };
-        if selection.lane >= voice.modulations.len() {
-            return false;
-        }
-        self.selected_voice = selection.voice;
-        self.selected_lane = selection.lane;
-        true
-    }
-
-    pub fn snapshot(&self) -> Option<super::ConsumerSnapshot> {
+    pub fn snapshot(&self, voice: VoiceId, lane: usize) -> Option<super::ConsumerSnapshot> {
         self.voices
             .iter()
-            .find(|voice| voice.id == self.selected_voice)
-            .and_then(|voice| voice.modulations.get(self.selected_lane))
+            .find(|candidate| candidate.id == voice)
+            .and_then(|voice| voice.modulations.get(lane))
             .map(Consumers::snapshot)
     }
 

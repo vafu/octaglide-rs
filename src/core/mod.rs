@@ -40,8 +40,6 @@ pub enum VoiceOutput {
 pub struct Core {
     voices: Vec<Voice, MAX_VOICES>,
     output: OutputSender,
-    selected_voice: VoiceId,
-    selected_lane: usize,
 }
 
 /// Semantic input consumed by Core.

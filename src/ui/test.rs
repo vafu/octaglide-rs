@@ -33,21 +33,21 @@ fn encoder_hold_and_button_release_selects_first_envelope() {
             Some(2),
             Some(4),
         );
-        assert!(first.selection.is_none());
+        assert_eq!(ui.selected().voice, VoiceId(0));
         let pressed = ui.handle(
             UiEvent::Button { index: 1, pressed: true },
             None,
             Some(2),
             Some(4),
         );
-        assert!(pressed.selection.is_none());
+        assert_eq!(ui.selected().voice, VoiceId(0));
         let released = ui.handle(
             UiEvent::Button { index: 1, pressed: false },
             None,
             Some(2),
             Some(4),
         );
-        assert_eq!(released.selection, Some(crate::core::Selection { voice: VoiceId(1), lane: 2 }));
+        assert_eq!(ui.selected(), crate::core::Selection { voice: VoiceId(1), lane: 2 });
     });
 }
 
@@ -66,15 +66,47 @@ fn lane_button_without_modifier_selects_lane() {
         Some(2),
         Some(4),
     );
-    assert_eq!(released.selection, Some(crate::core::Selection { voice: VoiceId(0), lane: 3 }));
+    assert_eq!(ui.selected(), crate::core::Selection { voice: VoiceId(0), lane: 3 });
+}
+
+#[test]
+fn slider_after_voice_selection_targets_the_new_voice() {
+    let mut ui = controller();
+    let _ = ui.handle(
+        UiEvent::EncoderClick { pressed: true },
+        None,
+        Some(2),
+        Some(4),
+    );
+    let _ = ui.handle(UiEvent::Button { index: 1, pressed: true }, None, Some(2), Some(4));
+    let _ = ui.handle(UiEvent::Button { index: 1, pressed: false }, None, Some(2), Some(4));
+    assert_eq!(ui.selected().voice, VoiceId(1));
+
+    let updates = ui.handle(
+        UiEvent::Slider {
+            index: 0,
+            value: u16::MAX,
+        },
+        None,
+        Some(2),
+        Some(4),
+    );
+    assert!(matches!(
+        updates.first(),
+        Some(crate::core::Input::ControlUpdate {
+            voice: VoiceId(1),
+            lane: 2,
+            ..
+        })
+    ));
 }
 
 #[test]
 fn mode_update_targets_selected_voice_and_lane() {
     let mut ui = controller();
-    let outcome = ui.handle(UiEvent::Encoder { increment: true }, None, Some(2), Some(4));
+    let updates = ui.handle(UiEvent::Encoder { increment: true }, None, Some(2), Some(4));
     assert!(matches!(
-        outcome.updates.first(),
+        updates.first(),
         Some(crate::core::Input::ModeUpdate {
             voice: VoiceId(0),
             lane: 2,
@@ -90,7 +122,7 @@ fn slider_pickup_uses_previous_physical_position() {
 
     // Start far from the target so the first move is filtered out.
     let blocked = ui.handle(UiEvent::Slider { index: 0, value: 0 }, Some(target), Some(2), Some(4));
-    assert!(blocked.updates.is_empty());
+    assert!(blocked.is_empty());
 
     // Cross the target between samples; the edit should be accepted.
     let accepted = ui.handle(
@@ -103,7 +135,7 @@ fn slider_pickup_uses_previous_physical_position() {
         Some(4),
     );
     assert!(matches!(
-        accepted.updates.first(),
+        accepted.first(),
         Some(crate::core::Input::ControlUpdate {
             voice: VoiceId(0),
             lane: 2,
@@ -126,19 +158,19 @@ fn alternate_slider_bank_maps_decay_and_attack_curves() {
 
     let decay = ui.handle(UiEvent::Slider { index: 2, value: 0 }, Some(target), Some(2), Some(4));
     assert!(matches!(
-        decay.updates.first(),
+        decay.first(),
         Some(crate::core::Input::ControlUpdate { control: 5, .. })
     ));
 
     let attack = ui.handle(UiEvent::Slider { index: 3, value: 0 }, Some(target), Some(2), Some(4));
     assert!(matches!(
-        attack.updates.first(),
+        attack.first(),
         Some(crate::core::Input::ControlUpdate { control: 6, .. })
     ));
 
     let sustain = ui.handle(UiEvent::Slider { index: 1, value: 0 }, Some(target), Some(2), Some(4));
     assert!(matches!(
-        sustain.updates.first(),
+        sustain.first(),
         Some(crate::core::Input::ControlUpdate { control: 1, .. })
     ));
 }
@@ -146,14 +178,14 @@ fn alternate_slider_bank_maps_decay_and_attack_curves() {
 #[test]
 fn usb_status_publishes_without_changing_selection() {
     let mut ui = controller();
-    let outcome = ui.handle(
+    let updates = ui.handle(
         UiEvent::UsbConnection { connected: true },
         None,
         Some(2),
         Some(4),
     );
-    assert!(outcome.publish);
-    assert_eq!(outcome.selection, None);
+    assert!(updates.is_empty());
+    assert_eq!(ui.selected(), crate::core::Selection { voice: VoiceId(0), lane: 2 });
 }
 
 #[test]

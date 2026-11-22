@@ -1,4 +1,4 @@
-use super::{Consumer, EnvelopeMode, Input, Selection, VoiceId, VoiceOutput};
+use super::{Consumer, EnvelopeMode, Input, VoiceId, VoiceOutput};
 use crate::{
     calc,
     core::{Cmd, Settings, consumers::ModTrigger},
@@ -93,7 +93,7 @@ fn octave_transforms_note_events_without_midi_channels() {
 }
 
 #[test]
-fn invalid_selection_is_rejected() {
+fn snapshot_rejects_unknown_voice_and_lane() {
     let _guard = TEST_NOTES.lock().unwrap();
     block_on(async {
         let (output, _receiver) = voice_outputs();
@@ -101,15 +101,10 @@ fn invalid_selection_is_rejected() {
             glide: animator(),
             envelopes: [animator(), animator()],
         });
-        let mut core = super::Core::new(output, resources);
-        assert!(!core.select(Selection {
-            voice: VoiceId(9),
-            lane: 0,
-        }));
-        assert!(core.select(Selection {
-            voice: VoiceId(0),
-            lane: 2,
-        }));
+        let core = super::Core::new(output, resources);
+        assert!(core.snapshot(VoiceId(9), 0).is_none());
+        assert!(core.snapshot(VoiceId(0), 4).is_none());
+        assert!(core.snapshot(VoiceId(0), 2).is_some());
     });
 }
 

@@ -363,8 +363,14 @@ mod app {
         ui_writer: crate::ui::UiWriter,
     ) -> ! {
         let core = cx.local.core;
-        let mut ui = Controller::new(ui_writer, core.selected());
-        ui.publish(core.snapshot());
+        let mut ui = Controller::new(
+            ui_writer,
+            crate::core::Selection {
+                voice: crate::core::VoiceId(0),
+                lane: 2,
+            },
+        );
+        ui.publish(core.snapshot(ui.selected().voice, ui.selected().lane));
         let midi = MidiController::new();
         loop {
             let Ok(event) = receiver.recv().await else { continue };
@@ -379,19 +385,15 @@ mod app {
                     }
                 }
                 AppEvent::Ui(event) => {
-                    let snapshot = core.snapshot();
-                    let first_envelope = core.first_envelope_lane(core.selected().voice);
-                    let lane_count = core.lane_count(core.selected().voice);
-                    let outcome = ui.handle(event, snapshot, first_envelope, lane_count);
-                    if let Some(selection) = outcome.selection {
-                        if core.select(selection) {
-                            ui.reset_pickup();
-                        }
-                    }
-                    for input in outcome.updates {
+                    let selected = ui.selected();
+                    let snapshot = core.snapshot(selected.voice, selected.lane);
+                    let first_envelope = core.first_envelope_lane(selected.voice);
+                    let lane_count = core.lane_count(selected.voice);
+                    let updates = ui.handle(event, snapshot, first_envelope, lane_count);
+                    for input in updates {
                         core.process(input).await;
                     }
-                    ui.publish(core.snapshot());
+                    ui.publish(core.snapshot(ui.selected().voice, ui.selected().lane));
                 }
             }
         }
