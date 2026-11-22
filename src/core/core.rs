@@ -23,7 +23,7 @@ impl Core {
             let [first_envelope, second_envelope] = resources.envelopes;
             voices
                 .push(Voice {
-                    id,
+                    idx: index,
                     voicing: vec![
                         Consumers::Octave(Octave::new(id)),
                         Consumers::Glider(Glider::new(id, resources.glide)),
@@ -46,13 +46,13 @@ impl Core {
     pub async fn process(&mut self, input: Input) {
         match input {
             Input::NoteOn { voice, .. } | Input::NoteOff { voice, .. } => {
-                if let Some(target) = self.voices.iter_mut().find(|v| v.id == voice) {
+                if let Some(target) = self.voice_mut(voice) {
                     let outputs = target.process_input(input).await;
                     self.emit(outputs).await;
                 }
             }
             Input::ControlUpdate { voice, lane, .. } | Input::ModeUpdate { voice, lane, .. } => {
-                if let Some(target) = self.voices.iter_mut().find(|v| v.id == voice) {
+                if let Some(target) = self.voice_mut(voice) {
                     let outputs = target.process_lane(lane, input).await;
                     self.emit(outputs).await;
                 }
@@ -61,30 +61,38 @@ impl Core {
     }
 
     pub fn snapshot(&self, voice: VoiceId, lane: usize) -> Option<super::ConsumerSnapshot> {
-        self.voices
-            .iter()
-            .find(|candidate| candidate.id == voice)
+        self.voice(voice)
             .and_then(|voice| voice.modulations.get(lane))
             .map(Consumers::snapshot)
     }
 
     pub fn lane_count(&self, voice: VoiceId) -> Option<usize> {
-        self.voices
-            .iter()
-            .find(|candidate| candidate.id == voice)
+        self.voice(voice)
             .map(|voice| voice.modulations.len())
     }
 
     pub fn first_envelope_lane(&self, voice: VoiceId) -> Option<usize> {
-        self.voices
-            .iter()
-            .find(|candidate| candidate.id == voice)
+        self.voice(voice)
             .and_then(|voice| {
                 voice
                     .modulations
                     .iter()
                     .position(|consumer| matches!(consumer, Consumers::ModTrigger(_)))
             })
+    }
+
+    fn voice(&self, id: VoiceId) -> Option<&Voice> {
+        let idx = id.0 as usize;
+        let voice = self.voices.get(idx)?;
+        debug_assert_eq!(voice.idx, idx, "voice index must match its position");
+        Some(voice)
+    }
+
+    fn voice_mut(&mut self, id: VoiceId) -> Option<&mut Voice> {
+        let idx = id.0 as usize;
+        let voice = self.voices.get_mut(idx)?;
+        debug_assert_eq!(voice.idx, idx, "voice index must match its position");
+        Some(voice)
     }
 
     async fn emit(&mut self, messages: impl IntoIterator<Item = VoiceOutput>) {

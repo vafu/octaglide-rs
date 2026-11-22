@@ -23,6 +23,36 @@ fn controller() -> Controller {
     )
 }
 
+fn controller_with_reader() -> (
+    Controller,
+    rtic_sync::signal::SignalReader<'static, crate::ui::DisplaySnapshot>,
+) {
+    let (writer, reader) = Box::leak(Box::new(Signal::new())).split();
+    let ui = Controller::new(
+        writer,
+        crate::core::Selection {
+            voice: VoiceId(0),
+            lane: 2,
+        },
+    );
+    (ui, reader)
+}
+
+#[test]
+fn publish_writes_only_when_the_display_changes() {
+    let (mut ui, mut reader) = controller_with_reader();
+    let target = snapshot([Some(0.5), None, None, None, None, None, None, None]);
+
+    ui.publish(Some(target));
+    assert!(reader.try_read().is_some());
+
+    ui.publish(Some(target));
+    assert!(reader.try_read().is_none());
+
+    ui.publish(Some(snapshot([Some(0.25), None, None, None, None, None, None, None])));
+    assert!(reader.try_read().is_some());
+}
+
 #[test]
 fn encoder_hold_and_button_release_selects_first_envelope() {
     block_on(async {

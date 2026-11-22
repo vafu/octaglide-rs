@@ -9,7 +9,7 @@ use super::snapshot::model;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Track {
-    pub id: u8,
+    pub idx: u8,
     pub voices: [VoiceId; MAX_VOICES],
     pub count: u8,
 }
@@ -34,17 +34,18 @@ pub struct Controller {
     sliders: [Option<u16>; 4],
     picked_up: [[bool; 2]; 4],
     usb_connected: bool,
+    last_published: Option<DisplaySnapshot>,
 }
 
 impl Controller {
     pub fn new(writer: UiWriter, selected: Selection) -> Self {
         let mut tracks = [Track {
-            id: 0,
+            idx: 0,
             voices: [VoiceId(0); MAX_VOICES],
             count: 0,
         }; MAX_VOICES];
         for (index, track) in tracks.iter_mut().enumerate() {
-            track.id = index as u8;
+            track.idx = index as u8;
             track.voices[0] = VoiceId(index as u8);
             track.count = 1;
         }
@@ -59,6 +60,7 @@ impl Controller {
             sliders: [None; 4],
             picked_up: [[false; 2]; 4],
             usb_connected: false,
+            last_published: None,
         }
     }
 
@@ -75,7 +77,7 @@ impl Controller {
             .tracks
             .iter()
             .find(|track| track.voices[..track.count as usize].contains(&self.selected.voice))
-            .map_or(0, |track| track.id);
+            .map_or(0, |track| track.idx);
         let display = DisplaySnapshot {
             track,
             voice: self.selected.voice.0,
@@ -83,7 +85,10 @@ impl Controller {
             usb_connected: self.usb_connected,
             model: snapshot.as_ref().and_then(model),
         };
-        self.writer.write(display);
+        if self.last_published != Some(display) {
+            self.last_published = Some(display);
+            self.writer.write(display);
+        }
     }
 
     pub fn handle(

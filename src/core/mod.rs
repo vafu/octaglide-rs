@@ -61,7 +61,7 @@ pub const MODULATION_LANES: usize = 4;
 /// Physical voice: voicing processors followed by exactly four modulation lanes.
 #[derive(Debug)]
 pub struct Voice {
-    id: VoiceId,
+    idx: usize,
     voicing: Vec<Consumers, MAX_VOICING_CONSUMERS>,
     modulations: [Consumers; MODULATION_LANES],
 }
