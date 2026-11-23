@@ -2,9 +2,7 @@ mod buttons;
 mod controller;
 #[cfg(target_os = "none")]
 mod display;
-#[cfg(any(test, target_os = "none"))]
 mod encoder;
-#[cfg(any(test, target_os = "none"))]
 mod envelope_plot;
 #[cfg(target_os = "none")]
 mod hardware;
@@ -14,7 +12,6 @@ pub use controller::{Controller, UiEvent};
 pub(crate) use envelope_plot::envelope_plot_level;
 #[cfg(target_os = "none")]
 pub use display::run_envelope_display;
-#[cfg(target_os = "none")]
 pub use encoder::EncoderDecoder;
 #[cfg(target_os = "none")]
 pub use hardware::{
@@ -31,24 +28,18 @@ pub struct ButtonDebouncer {
     released_at_ms: Option<u32>,
 }
 
-#[cfg(target_os = "none")]
 pub struct ButtonEdge {
     pub index: u8,
     pub pressed: bool,
     pub at_ms: u32,
 }
 
-#[cfg(target_os = "none")]
 pub const ENCODER_BUTTON_INDEX: u8 = 4;
-#[cfg(target_os = "none")]
 pub const BUTTON_QUEUE_CAPACITY: usize = 16;
-#[cfg(target_os = "none")]
 pub type ButtonSender = rtic_sync::channel::Sender<'static, ButtonEdge, BUTTON_QUEUE_CAPACITY>;
-#[cfg(target_os = "none")]
 pub type ButtonReceiver = rtic_sync::channel::Receiver<'static, ButtonEdge, BUTTON_QUEUE_CAPACITY>;
 
 pub type UiWriter = rtic_sync::signal::SignalWriter<'static, DisplaySnapshot>;
-#[cfg(target_os = "none")]
 pub type UiReader = rtic_sync::signal::SignalReader<'static, DisplaySnapshot>;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
