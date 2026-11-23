@@ -8,7 +8,18 @@ mod calc;
 #[path = "../../../src/core/mod.rs"]
 mod core;
 #[path = "../../../src/midi/fmt.rs"]
-mod midi;
+mod midi_fmt;
+#[path = "../../../src/midi/controller.rs"]
+mod midi_controller;
+
+#[path = "../../../src/midi/bus.rs"]
+mod midi_bus;
+
+mod midi {
+    pub use crate::midi_bus::MidiBus;
+    pub use crate::midi_controller::MidiController;
+    pub use crate::midi_fmt::*;
+}
 #[path = "../../../src/notes/mod.rs"]
 mod notes;
 #[path = "../../../src/output/mod.rs"]
@@ -27,3 +38,6 @@ mod app {
 
 #[cfg(test)]
 mod storage_test;
+
+#[cfg(test)]
+mod core_task_test;

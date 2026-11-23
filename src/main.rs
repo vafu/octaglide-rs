@@ -365,21 +365,10 @@ mod app {
     #[task(local = [tx_bus], priority = 3)]
     async fn midi_dispatch(
         cx: midi_dispatch::Context,
-        mut r: OutputReceiver,
+        r: OutputReceiver,
         controller: MidiController,
     ) -> ! {
-        let bus = cx.local.tx_bus;
-        loop {
-            let message = r.recv().await.unwrap();
-            match message {
-                OutputMessage::Raw(msg) => bus.send(&msg),
-                OutputMessage::Semantic(output) => {
-                    if let Some(msg) = controller.encode(output) {
-                        bus.send(&msg);
-                    }
-                }
-            }
-        }
+        crate::runtime::run_midi_dispatch(cx.local.tx_bus, r, controller).await
     }
 
     fn configured_log_level() -> log::LevelFilter {
@@ -396,45 +385,11 @@ mod app {
     #[task(local = [core], priority = 1)]
     async fn core_task(
         cx: core_task::Context,
-        mut receiver: CoreReceiver,
-        mut output: OutputSender,
+        receiver: CoreReceiver,
+        output: OutputSender,
         ui_writer: crate::ui::UiWriter,
     ) -> ! {
-        let core = cx.local.core;
-        let mut ui = Controller::new(
-            ui_writer,
-            crate::core::Selection {
-                voice: crate::core::VoiceId(0),
-                lane: 2,
-            },
-        );
-        ui.publish(core.snapshot(ui.selected().voice, ui.selected().lane));
-        let midi = MidiController::new();
-        loop {
-            let Ok(event) = receiver.recv().await else { continue };
-            match event {
-                AppEvent::Midi(msg) => {
-                    if let Some(inputs) = midi.translate(&msg) {
-                        for input in inputs {
-                            core.process(input).await;
-                        }
-                    } else {
-                        output.send(OutputMessage::Raw(msg)).await.ok();
-                    }
-                }
-                AppEvent::Ui(event) => {
-                    let selected = ui.selected();
-                    let snapshot = core.snapshot(selected.voice, selected.lane);
-                    let first_envelope = core.first_envelope_lane(selected.voice);
-                    let lane_count = core.lane_count(selected.voice);
-                    let updates = ui.handle(event, snapshot, first_envelope, lane_count);
-                    for input in updates {
-                        core.process(input).await;
-                    }
-                    ui.publish(core.snapshot(ui.selected().voice, ui.selected().lane));
-                }
-            }
-        }
+        crate::runtime::run_core(cx.local.core, receiver, output, ui_writer).await
     }
 
     #[task(priority = 1)]

@@ -1,5 +1,6 @@
 mod fmt;
 mod controller;
+mod bus;
 
 use enum_dispatch::enum_dispatch;
 use heapless::Deque;
@@ -9,20 +10,11 @@ use teensy4_bsp::{hal::lpuart::Status, ral};
 use crate::{app::MidiUart, app_event::AppSender, usb::UsbMidiBus};
 
 pub(crate) use fmt::log_midi;
+pub use bus::MidiBus;
 pub use controller::MidiController;
 
 // TODO(octaglide-task-30): evaluate Elektron Turbo MIDI baud and buffer sizing.
 const MIDI_BUF_SIZE: usize = 32;
-
-/// Common interface for MIDI bus implementations (UART, USB, etc.)
-#[enum_dispatch]
-pub trait MidiBus {
-    /// Process incoming MIDI (called from ISR or polling loop)
-    fn poll(&mut self);
-
-    /// Send MIDI message to output
-    fn send(&mut self, msg: &MidiMsg);
-}
 
 /// Polymorphic bus type using enum dispatch for zero-cost abstraction
 #[enum_dispatch(MidiBus)]
