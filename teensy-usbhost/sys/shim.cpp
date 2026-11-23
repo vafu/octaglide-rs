@@ -113,8 +113,6 @@ void cpp_send_midi(const uint8_t *data, uint8_t len) {
   // System real-time messages are single-byte and bypass running status.
   if (status >= 0xF8) {
     midi->sendRealTime(status);
-    // Flush the driver's pending packet so clock is not held for its batch timer.
-    midi->send_now();
     return;
   }
 
@@ -201,6 +199,10 @@ void cpp_midi_get_device_info(uint16_t *vendor, uint16_t *product) {
     *vendor = 0;
     *product = 0;
   }
+}
+
+uint32_t cpp_midi_tx_errors() {
+  return (midi && *midi) ? midi->txQueueErrors() : 0;
 }
 
 } // extern "C"

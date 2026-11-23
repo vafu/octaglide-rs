@@ -18,7 +18,7 @@ const ROUTES: [(Channel, VoiceId); 8] = [
 ];
 
 const OUTPUT_CHANNELS: [Channel; 4] = [Channel::Ch1, Channel::Ch2, Channel::Ch3, Channel::Ch4];
-const OUTPUT_CC: [[u8; 2]; 4] = [[2, 3], [2, 3], [2, 3], [2, 3]];
+const OUTPUT_CC: [[u8; 2]; 4] = [[3, 4], [3, 4], [3, 4], [3, 4]];
 
 #[derive(Debug)]
 pub struct MidiController;

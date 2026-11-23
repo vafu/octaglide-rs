@@ -614,6 +614,7 @@ version = "0.1.0"
 dependencies = [
  "cortex-m",
  "cortex-m-microclock",
+ "cortex-m-rt",
  "embedded-alloc",
  "embedded-graphics",
  "enum_dispatch",

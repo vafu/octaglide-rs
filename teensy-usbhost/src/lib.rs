@@ -26,6 +26,7 @@ extern "C" {
     fn cpp_host_port_status() -> u32;
     fn cpp_send_midi(data: *const u8, len: u8);
     fn cpp_midi_connected() -> i32;
+    fn cpp_midi_tx_errors() -> u32;
     fn cpp_midi_get_device_info(vendor: *mut u16, product: *mut u16);
 }
 
@@ -119,6 +120,14 @@ pub fn host_port_status() -> u32 {
 /// Safe to call at any time after `init()`.
 pub fn midi_connected() -> bool {
     unsafe { cpp_midi_connected() == 1 }
+}
+
+/// Number of MIDI TX buffers dropped because they could not be queued.
+///
+/// A non-zero, growing value means the driver is failing to submit transfers
+/// and is dropping messages rather than wedging.
+pub fn midi_tx_errors() -> u32 {
+    unsafe { cpp_midi_tx_errors() }
 }
 
 /// Get device information for the connected MIDI device.

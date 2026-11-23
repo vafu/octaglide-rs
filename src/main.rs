@@ -8,9 +8,8 @@ use cortex_m::interrupt;
 #[allow(static_mut_refs)]
 fn panic(info: &PanicInfo) -> ! {
     interrupt::disable();
-    crate::crashlog::panic(info);
+    crate::diagnostics::panic(info);
     log::set_max_level(log::LevelFilter::Error);
-    log::error!("{}", info);
     unsafe {
         if let Some(poller) = app::POLLER.as_mut() {
             for _ in 0..5000 {
@@ -25,11 +24,32 @@ fn panic(info: &PanicInfo) -> ! {
     }
 }
 
+/// Records the fault before parking, so the next boot can report it.
+///
+/// Without this the default handler is a bare infinite loop, which is
+/// indistinguishable from a hang in the vendored USB host code.
+#[cortex_m_rt::exception]
+#[allow(static_mut_refs)]
+unsafe fn HardFault(frame: &cortex_m_rt::ExceptionFrame) -> ! {
+    interrupt::disable();
+    crate::diagnostics::fault(frame);
+    log::set_max_level(log::LevelFilter::Error);
+    unsafe {
+        if let Some(poller) = app::POLLER.as_mut() {
+            for _ in 0..5000 {
+                poller.poll();
+                cortex_m::asm::delay(10000);
+            }
+        }
+    }
+    teensy4_panic::sos()
+}
+
 mod anim;
 mod app_event;
 mod calc;
 mod core;
-mod crashlog;
+mod diagnostics;
 mod midi;
 mod notes;
 mod output;
@@ -39,7 +59,7 @@ mod usb;
 
 extern crate alloc;
 
-#[rtic::app(device = teensy4_bsp, peripherals = true, dispatchers = [KPP, GPT1])]
+#[rtic::app(device = teensy4_bsp, peripherals = true, dispatchers = [KPP, GPT1, TMR1])]
 mod app {
 
     use crate::{
@@ -114,11 +134,11 @@ mod app {
     #[shared]
     struct Shared {
         rx_bus: Bus, // UART input
-        tx_bus: Bus, // USB output
     }
 
     #[local]
     struct Local {
+        tx_bus: Bus, // USB output; owned by midi_dispatch
         led: board::Led,
         core: Core,
         reset_btn: gpio::Input<pins::P7>,
@@ -196,7 +216,6 @@ mod app {
             POLLER = Some(poller);
         });
         log::set_max_level(configured_log_level());
-        crashlog_dump::spawn().ok();
 
         let (output_sender, output_receiver) = make_channel!(OutputMessage, 32);
         let (core_sender, core_receiver) = make_channel!(AppEvent, 16);
@@ -286,9 +305,9 @@ mod app {
         (
             Shared {
                 rx_bus: Bus::Uart(uart_bus),
-                tx_bus: Bus::Usb(usb_bus),
             },
             Local {
+                tx_bus: Bus::Usb(usb_bus),
                 led: board::led(&mut gpio2, pins.p13),
                 core: Core::new(output_sender.clone(), [first, second, third, fourth]),
                 reset_btn,
@@ -320,27 +339,30 @@ mod app {
             cortex_m::asm::wfi();
         }
     }
-    #[task(binds = LPUART8, shared = [rx_bus], priority = 2)]
+    #[task(binds = LPUART8, shared = [rx_bus], priority = 4)]
     fn midi_handler(mut cx: midi_handler::Context) {
         cx.shared.rx_bus.lock(|bus| bus.poll());
     }
 
-    #[task(shared = [tx_bus], priority = 2)]
+    /// Sole owner of the MIDI output bus. Runs above every application task so
+    /// clock and notes are never delayed by UI work.
+    #[task(local = [tx_bus], priority = 3)]
     async fn midi_dispatch(
-        mut cx: midi_dispatch::Context,
+        cx: midi_dispatch::Context,
         mut r: OutputReceiver,
         controller: MidiController,
     ) -> ! {
+        let bus = cx.local.tx_bus;
         loop {
             let message = r.recv().await.unwrap();
-            cx.shared.tx_bus.lock(|bus| match message {
+            match message {
                 OutputMessage::Raw(msg) => bus.send(&msg),
                 OutputMessage::Semantic(output) => {
                     if let Some(msg) = controller.encode(output) {
                         bus.send(&msg);
                     }
                 }
-            });
+            }
         }
     }
 
@@ -404,23 +426,21 @@ mod app {
         crate::usb::run_host(sender).await
     }
 
-    /// Give the USB serial host time to attach before reporting a retained panic.
-    #[task(priority = 1)]
-    async fn crashlog_dump(_cx: crashlog_dump::Context) {
-        Systick::delay(3_000.millis()).await;
-        if !crate::crashlog::flush() {
-            log::info!("crash log: none");
-        }
-        crate::crashlog::clear();
-    }
-
     /// USB Host interrupt handler; maintenance is started once during init.
-    #[task(binds = USB_OTG2, shared = [tx_bus], priority = 2)]
+    ///
+    /// Runs above every software task so it can always service transfer
+    /// completions and timer events, including while `midi_dispatch` is
+    /// waiting for TX buffer space. It must not declare `tx_bus`: doing so
+    /// raises that resource's ceiling to this priority, which would mask this
+    /// handler while the MIDI sender holds the lock.
+    #[task(binds = USB_OTG2, priority = 4)]
     fn usb_host_isr(_cx: usb_host_isr::Context) {
         usbhost::usb_isr();
     }
 
-    #[task(binds = USB_OTG1, priority = 2)]
+    /// Logging poller. Deliberately lowest priority: it takes a global critical
+    /// section, and diagnostics must never delay the I/O it is observing.
+    #[task(binds = USB_OTG1, priority = 1)]
     #[allow(static_mut_refs)]
     fn otg_interrupt(_cx: otg_interrupt::Context) {
         unsafe {
@@ -432,7 +452,7 @@ mod app {
         }
     }
 
-    #[task(local = [led], priority = 1)]
+    #[task(local = [led], priority = 2)]
     async fn blink_led(cx: blink_led::Context) {
         let led = cx.local.led;
         led.set();
@@ -444,7 +464,7 @@ mod app {
     ///
     /// P7 (GPIO2_IO17) is pulled high and grounded by the reset switch.
     /// A falling edge immediately resets the MCU.
-    #[task(binds = GPIO2_COMBINED_16_31, local = [reset_btn], priority = 2)]
+    #[task(binds = GPIO2_COMBINED_16_31, local = [reset_btn], priority = 4)]
     fn reset_button_isr(cx: reset_button_isr::Context) {
         let btn = cx.local.reset_btn;
         if btn.is_triggered() {
@@ -458,7 +478,7 @@ mod app {
     #[task(
         binds = GPIO1_COMBINED_16_31,
         local = [enc_a, enc_b, enc_click, encoder, enc_sender, enc_button_sender],
-        priority = 2
+        priority = 4
     )]
     fn encoder_isr(cx: encoder_isr::Context) {
         crate::ui::handle_encoder_interrupt(cx);
@@ -467,7 +487,7 @@ mod app {
     #[task(
         binds = GPIO3_COMBINED_16_31,
         local = [button1, button3, button4, buttons_gpio3_sender],
-        priority = 2
+        priority = 4
     )]
     fn buttons_gpio3_isr(cx: buttons_gpio3_isr::Context) {
         crate::ui::handle_buttons_gpio3_interrupt(cx);
@@ -476,13 +496,13 @@ mod app {
     #[task(
         binds = GPIO4_COMBINED_16_31,
         local = [button2, buttons_gpio4_sender],
-        priority = 2
+        priority = 4
     )]
     fn buttons_gpio4_isr(cx: buttons_gpio4_isr::Context) {
         crate::ui::handle_buttons_gpio4_interrupt(cx);
     }
 
-    #[task(priority = 1)]
+    #[task(priority = 2)]
     async fn button_task(_cx: button_task::Context, receiver: ButtonReceiver, sender: CoreSender) -> ! {
         crate::ui::run_buttons(receiver, sender).await
     }
@@ -490,12 +510,12 @@ mod app {
     /// Periodically reads 4 ADC sliders and sends ADSR parameter updates to core.
     /// Sliders map: 0=Release, 1=Sustain, 2=Decay, 3=Attack.
     /// Only sends an update when a slider value changes by more than SLIDER_DEADBAND counts.
-    #[task(local = [adc1, adc2, slider0, slider1, slider2, slider3, prev: [u16; 4] = [u16::MAX; 4]], priority = 1)]
+    #[task(local = [adc1, adc2, slider0, slider1, slider2, slider3, prev: [u16; 4] = [u16::MAX; 4]], priority = 2)]
     async fn read_sliders(cx: read_sliders::Context, sender: CoreSender) -> ! {
         crate::ui::read_sliders(cx, sender).await
     }
 
-    #[task(priority = 2)]
+    #[task(priority = 3)]
     async fn animate_voices(
         _cx: animate_voices::Context,
         engines: [[AnimationEngine; ANIMATORS_PER_VOICE]; MAX_VOICES],
@@ -504,7 +524,7 @@ mod app {
         crate::anim::run_animations(engines, sender).await
     }
 
-    #[task(priority = 1)]
+    #[task(priority = 2)]
     async fn oled_task(_cx: oled_task::Context, i2c: board::Lpi2c1, updates: UiReader) {
         crate::ui::run_envelope_display(i2c, updates).await;
     }

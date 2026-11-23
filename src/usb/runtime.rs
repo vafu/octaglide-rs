@@ -8,8 +8,14 @@ pub async fn run_host(mut sender: CoreSender) -> ! {
     usbhost::init();
     let mut reported = None;
     let mut reported_port = None;
+    let mut reported_tx_errors = 0;
     loop {
         usbhost::task();
+        let tx_errors = usbhost::midi_tx_errors();
+        if tx_errors != reported_tx_errors {
+            log::error!("MIDI TX errors: {} (was {})", tx_errors, reported_tx_errors);
+            reported_tx_errors = tx_errors;
+        }
         let port = usbhost::host_port_status();
         // Report stable connection-stage bits, avoiding write-one-to-clear flags.
         let state = port & ((1 << 0) | (1 << 2) | (1 << 8) | (1 << 12));
