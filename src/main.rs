@@ -53,6 +53,7 @@ mod diagnostics;
 mod midi;
 mod notes;
 mod output;
+mod runtime;
 mod state;
 mod ui;
 mod usb;

@@ -15,6 +15,8 @@ mod notes;
 mod output;
 #[path = "../../../src/state/mod.rs"]
 mod state;
+#[path = "../../../src/runtime/mod.rs"]
+mod runtime;
 #[path = "../../../src/ui/mod.rs"]
 mod ui;
 
@@ -22,3 +24,6 @@ mod app {
     use rtic_sync::channel::Sender;
     pub type Animator = Sender<'static, crate::core::Cmd, 1>;
 }
+
+#[cfg(test)]
+mod storage_test;

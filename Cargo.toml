@@ -18,6 +18,7 @@ cortex-m = "0.7.7"
 cortex-m-rt = "0.7"
 cortex-m-microclock = "0.1"
 heapless = "0.9.1"
+static_cell = "2"
 paste = "1.0"
 futures = { version = "0.3", default-features = false }
 enum_dispatch = "0.3.13"

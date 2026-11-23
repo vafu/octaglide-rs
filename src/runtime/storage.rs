@@ -1,0 +1,95 @@
+//! Single-owner storage for every bounded runtime channel.
+
+use rtic_sync::{
+    channel::Channel,
+    signal::Signal,
+};
+
+use crate::{
+    app_event::AppEvent,
+    core::{AnimationEngine, Cmd, VoiceAnimators, ANIMATORS_PER_VOICE, MAX_VOICES},
+    output::OutputMessage,
+    ui::{ButtonEdge, DisplaySnapshot},
+};
+
+/// Owns the channels shared by every platform runtime task.
+///
+/// Construct once, then call [`RuntimeStorage::split`] to hand out endpoints.
+pub struct RuntimeStorage {
+    pub output: Channel<OutputMessage, 32>,
+    pub app: Channel<AppEvent, 16>,
+    pub buttons: Channel<ButtonEdge, 16>,
+    pub ui: Signal<DisplaySnapshot>,
+    pub animators: [[Channel<Cmd, 1>; ANIMATORS_PER_VOICE]; MAX_VOICES],
+}
+
+/// Split endpoints for a [`RuntimeStorage`].
+pub struct RuntimeHandles {
+    pub output_sender: rtic_sync::channel::Sender<'static, OutputMessage, 32>,
+    pub output_receiver: rtic_sync::channel::Receiver<'static, OutputMessage, 32>,
+    pub app_sender: rtic_sync::channel::Sender<'static, AppEvent, 16>,
+    pub app_receiver: rtic_sync::channel::Receiver<'static, AppEvent, 16>,
+    pub button_sender: rtic_sync::channel::Sender<'static, ButtonEdge, 16>,
+    pub button_receiver: rtic_sync::channel::Receiver<'static, ButtonEdge, 16>,
+    pub ui_writer: rtic_sync::signal::SignalWriter<'static, DisplaySnapshot>,
+    pub ui_reader: rtic_sync::signal::SignalReader<'static, DisplaySnapshot>,
+    pub animators: [VoiceAnimators; MAX_VOICES],
+    pub engines: [[AnimationEngine; ANIMATORS_PER_VOICE]; MAX_VOICES],
+}
+
+impl RuntimeStorage {
+    /// Creates empty channels. `const` so the value can live in a `StaticCell`.
+    pub const fn new() -> Self {
+        Self {
+            output: Channel::new(),
+            app: Channel::new(),
+            buttons: Channel::new(),
+            ui: Signal::new(),
+            animators: [const { [const { Channel::new() }; ANIMATORS_PER_VOICE] }; MAX_VOICES],
+        }
+    }
+
+    /// Splits every channel exactly once.
+    ///
+    /// The `&'static mut` receiver makes a second split impossible at compile time,
+    /// matching the one-shot guarantee `make_channel!` enforces at runtime.
+    pub fn split(&'static mut self) -> RuntimeHandles {
+        let (output_sender, output_receiver) = self.output.split();
+        let (app_sender, app_receiver) = self.app.split();
+        let (button_sender, button_receiver) = self.buttons.split();
+        let (ui_writer, ui_reader) = self.ui.split();
+
+        let mut animators: [Option<VoiceAnimators>; MAX_VOICES] = [const { None }; MAX_VOICES];
+        let mut engines: [Option<[AnimationEngine; ANIMATORS_PER_VOICE]>; MAX_VOICES] =
+            [const { None }; MAX_VOICES];
+
+        for (index, channels) in self.animators.iter_mut().enumerate() {
+            let [glide, first, second] = channels;
+            let (glide_tx, glide_rx) = glide.split();
+            let (first_tx, first_rx) = first.split();
+            let (second_tx, second_rx) = second.split();
+            animators[index] = Some(VoiceAnimators {
+                glide: glide_tx,
+                envelopes: [first_tx, second_tx],
+            });
+            engines[index] = Some([
+                AnimationEngine::new(glide_rx),
+                AnimationEngine::new(first_rx),
+                AnimationEngine::new(second_rx),
+            ]);
+        }
+
+        RuntimeHandles {
+            output_sender,
+            output_receiver,
+            app_sender,
+            app_receiver,
+            button_sender,
+            button_receiver,
+            ui_writer,
+            ui_reader,
+            animators: animators.map(Option::unwrap),
+            engines: engines.map(Option::unwrap),
+        }
+    }
+}
