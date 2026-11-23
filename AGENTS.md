@@ -9,6 +9,22 @@ Guidelines for agents working in this repository.
 - Keep platform-specific code isolated from portable domain logic. Board support, RTIC resource types, pin types, hardware register access, and C/C++ FFI details should not leak into portable modules.
 - Prefer small modules with explicit ownership over large mixed-purpose files.
 
+## Platform Split
+
+- `src/core/` is portable domain logic. It must not import `teensy4_bsp`, `teensy_usbhost`, `cortex_m`, `rtic::app`, `rtic_monotonics`, or Tokio.
+- `src/runtime/` holds executor-agnostic async task bodies and `RuntimeStorage`. Same import restrictions as `core`.
+- `src/teensy/` owns all board support: the RTIC app, clocks, USB, MIDI transports, and the SH1106 display loop.
+- `src/host/` owns the Tokio simulator: clock, MIDI bus, keyboard input, and SDL display.
+- The host does not model RTIC priorities. Do not use it to draw timing conclusions.
+
+## Build Commands
+
+- Firmware: `cargo check`
+- Host semantics: `cargo test --manifest-path tests/host/Cargo.toml --target x86_64-unknown-linux-gnu --offline`
+- Host simulator: `cargo run --no-default-features --features host --target x86_64-unknown-linux-gnu`
+
+Host builds must use `--no-default-features`; the `teensy` and `host` features are mutually exclusive.
+
 ## Module Layout
 
 - `src/` should contain `main.rs` plus module directories. Do not add new root-level implementation files.

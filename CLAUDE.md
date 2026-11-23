@@ -34,7 +34,7 @@ OctaglideRS is an embedded Rust MIDI processor that runs on a Teensy 4.1 microco
 
 2. **Separate HAL Code** - Keep board-specific initialization isolated
    - ✅ All BSP/HAL code in `main.rs` or `src/hal/`
-   - ✅ Business logic in `src/core/`, `src/anim/`, etc.
+   - ✅ Business logic in `src/core/`, shared task bodies in `src/runtime/`, platform code in `src/teensy/` or `src/host/`
    - ❌ Never mix `teensy4_bsp` imports into core modules
 
 3. **Feature Flags for Platform Code**
@@ -364,7 +364,7 @@ Future extensions (tracked in Backlog.md): filters, post-processors, presets, co
   ```
 
 ### DON'T:
-- Mix platform-specific code into core modules (`src/core/`, `src/anim/`)
+- Mix platform-specific code into portable modules (`src/core/`, `src/runtime/`)
 - Use `std` library features (embedded `no_std` environment)
 - Perform blocking operations in high-priority tasks
 - Assume synth-specific features without configuration

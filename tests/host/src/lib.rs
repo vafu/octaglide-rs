@@ -52,3 +52,6 @@ mod renderer_test;
 
 #[cfg(test)]
 mod host_input_test;
+
+#[cfg(test)]
+mod boundary_test;
