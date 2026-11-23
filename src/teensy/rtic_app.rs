@@ -22,6 +22,7 @@ mod app {
     use board::t41 as brd;
     use embedded_alloc::LlffHeap as Heap;
     use imxrt_log as logging;
+    use cortex_m::interrupt;
     use rtic_monotonics::{
         Monotonic,
         systick::{Systick, *},
@@ -155,7 +156,7 @@ mod app {
         } = brd(cx.device);
 
         let poller = logging::log::usbd(usb, logging::Interrupts::Enabled).unwrap();
-        crate::interrupt::free(|_| unsafe {
+        interrupt::free(|_| unsafe {
             POLLER = Some(poller);
         });
         log::set_max_level(configured_log_level());
@@ -342,7 +343,7 @@ mod app {
     #[allow(static_mut_refs)]
     fn otg_interrupt(_cx: otg_interrupt::Context) {
         unsafe {
-            crate::interrupt::free(|_| {
+            interrupt::free(|_| {
                 if let Some(p) = POLLER.as_mut() {
                     p.poll();
                 }
