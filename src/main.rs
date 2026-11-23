@@ -45,7 +45,6 @@ unsafe fn HardFault(frame: &cortex_m_rt::ExceptionFrame) -> ! {
     teensy4_panic::sos()
 }
 
-mod anim;
 mod app_event;
 mod calc;
 mod core;
@@ -475,7 +474,7 @@ mod app {
 
     #[task(priority = 2)]
     async fn button_task(_cx: button_task::Context, receiver: ButtonReceiver, sender: CoreSender) -> ! {
-        crate::ui::run_buttons(receiver, sender).await
+        crate::runtime::run_buttons::<SystickClock>(receiver, sender).await
     }
 
     /// Periodically reads 4 ADC sliders and sends ADSR parameter updates to core.
@@ -492,7 +491,7 @@ mod app {
         engines: [[AnimationEngine; ANIMATORS_PER_VOICE]; MAX_VOICES],
         sender: MidiSender,
     ) {
-        crate::anim::run_animations::<SystickClock>(engines, sender).await
+        crate::runtime::run_animations::<SystickClock>(engines, sender).await
     }
 
     #[task(priority = 2)]

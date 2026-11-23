@@ -39,50 +39,6 @@ fn handle_button<P>(pin: &gpio::Input<P>, sender: &mut ButtonSender, index: u8, 
         .ok();
 }
 
-pub async fn run_buttons(mut receiver: ButtonReceiver, mut sender: CoreSender) -> ! {
-    use futures::future::{Either, select};
-
-    let mut buttons = [const { ButtonDebouncer::new() }; ENCODER_BUTTON_INDEX as usize + 1];
-    loop {
-        let edge = if buttons.iter().any(ButtonDebouncer::release_pending) {
-            let receive = receiver.recv();
-            let delay = Systick::delay(5.millis());
-            futures::pin_mut!(receive, delay);
-            // Drain queued edges before confirming any release.
-            match select(receive, delay).await {
-                Either::Left((edge, _)) => edge.ok(),
-                Either::Right(_) => None,
-            }
-        } else {
-            receiver.recv().await.ok()
-        };
-
-        // Settle releases that preceded this edge, even if the task was delayed.
-        let at_ms = edge.as_ref().map_or_else(
-            || Systick::now().duration_since_epoch().to_millis(),
-            |edge| edge.at_ms,
-        );
-        while let Some(index) = super::buttons::take_next_release(&mut buttons, at_ms) {
-            sender.send(AppEvent::Ui(button_input(index as u8, false))).await.ok();
-        }
-        if let Some(edge) = edge {
-            if let Some(button) = buttons.get_mut(edge.index as usize)
-                && button.update(edge.at_ms, edge.pressed)
-            {
-                sender.send(AppEvent::Ui(button_input(edge.index, true))).await.ok();
-            }
-        }
-    }
-}
-
-fn button_input(index: u8, pressed: bool) -> UiEvent {
-    if index == ENCODER_BUTTON_INDEX {
-        UiEvent::EncoderClick { pressed }
-    } else {
-        UiEvent::Button { index, pressed }
-    }
-}
-
 pub fn handle_encoder_interrupt(cx: crate::app::encoder_isr::Context<'_>) {
     let encoder_triggered = cx.local.enc_a.is_triggered() || cx.local.enc_b.is_triggered();
     if cx.local.enc_a.is_triggered() {

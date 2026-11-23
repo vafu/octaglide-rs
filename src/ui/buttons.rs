@@ -1,4 +1,9 @@
-use super::ButtonDebouncer;
+/// Debounces one active-low button from interrupt edges.
+#[derive(Debug)]
+pub struct ButtonDebouncer {
+    latched: bool,
+    released_at_ms: Option<u32>,
+}
 
 impl ButtonDebouncer {
     const RELEASE_DEBOUNCE_MS: u32 = 30;
@@ -46,7 +51,7 @@ impl ButtonDebouncer {
 }
 
 /// Confirm the oldest settled release first, preserving modifier/button order.
-pub(super) fn take_next_release(buttons: &mut [ButtonDebouncer], now_ms: u32) -> Option<usize> {
+pub fn take_next_release(buttons: &mut [ButtonDebouncer], now_ms: u32) -> Option<usize> {
     let index = buttons
         .iter()
         .enumerate()
