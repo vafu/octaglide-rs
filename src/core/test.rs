@@ -14,7 +14,7 @@ fn channel<T, const N: usize>() -> (Sender<'static, T, N>, Receiver<'static, T, 
     Box::leak(Box::new(Queue::<T, N>::new())).split()
 }
 
-fn animator() -> crate::app::Animator {
+fn animator() -> crate::core::Animator {
     channel().0
 }
 

@@ -101,7 +101,7 @@ mod app {
     };
 
     pub type MidiUart = Lpuart<Pins<pins::P20, pins::P21>, 8>;
-    pub type Animator = Sender<'static, Cmd, 1>;
+    pub type Animator = crate::core::Animator;
     pub type CoreSender = AppSender;
     pub type CoreReceiver = AppReceiver;
     pub type MidiSender = OutputSender;

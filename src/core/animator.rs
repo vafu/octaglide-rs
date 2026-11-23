@@ -189,10 +189,12 @@ fn same_continuous_target(a: &VoiceOutput, b: &VoiceOutput) -> bool {
 /// One glide engine and two envelope engines per voice.
 pub const ANIMATORS_PER_VOICE: usize = 3;
 
+pub type Animator = rtic_sync::channel::Sender<'static, Cmd, 1>;
+
 #[derive(Debug)]
 pub struct VoiceAnimators {
-    pub glide: crate::app::Animator,
-    pub envelopes: [crate::app::Animator; 2],
+    pub glide: Animator,
+    pub envelopes: [Animator; 2],
 }
 
 #[derive(Debug)]

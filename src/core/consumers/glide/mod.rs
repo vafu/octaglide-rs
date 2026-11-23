@@ -1,6 +1,7 @@
 use crate::{
-    app::Animator,
-    core::{Cmd, GlideMode, GlideState, Input, Modulator, OutputEvents, Settings, VoiceId},
+    core::{
+        Animator, Cmd, GlideMode, GlideState, Input, Modulator, OutputEvents, Settings, VoiceId,
+    },
 };
 
 use super::{Consumer, CONTROL_SLOTS};

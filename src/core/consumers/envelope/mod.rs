@@ -1,6 +1,8 @@
 use crate::{
-    app::Animator,
-    core::{Cmd, EnvelopeMode, EnvelopeState, Input, Modulator, OutputEvents, Settings, VoiceId},
+    core::{
+        Animator, Cmd, EnvelopeMode, EnvelopeState, Input, Modulator, OutputEvents, Settings,
+        VoiceId,
+    },
 };
 
 use super::{Consumer, CONTROL_SLOTS};

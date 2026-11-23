@@ -12,7 +12,7 @@ use heapless::Vec;
 use crate::output::OutputSender;
 
 pub use self::animator::{
-    ANIMATORS_PER_VOICE, AnimationEngine, Cmd, Settings, VoiceAnimators,
+    ANIMATORS_PER_VOICE, Animator, AnimationEngine, Cmd, Settings, VoiceAnimators,
 };
 pub use self::consumers::{
     Consumer, ConsumerKind, Consumers, CONTROL_SLOTS,
