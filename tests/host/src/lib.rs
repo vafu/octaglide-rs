@@ -30,6 +30,8 @@ mod state;
 mod runtime;
 #[path = "../../../src/ui/mod.rs"]
 mod ui;
+#[path = "../../../src/host/input.rs"]
+mod host_input;
 
 mod app {
     use rtic_sync::channel::Sender;
@@ -47,3 +49,6 @@ mod buttons_test;
 
 #[cfg(test)]
 mod renderer_test;
+
+#[cfg(test)]
+mod host_input_test;

@@ -14,7 +14,7 @@ pub use encoder::EncoderDecoder;
 #[cfg(test)]
 mod test;
 
-#[derive(Debug)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct ButtonEdge {
     pub index: u8,
     pub pressed: bool,
