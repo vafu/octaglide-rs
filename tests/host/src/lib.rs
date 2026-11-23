@@ -41,3 +41,9 @@ mod storage_test;
 
 #[cfg(test)]
 mod core_task_test;
+
+#[cfg(test)]
+mod buttons_test;
+
+#[cfg(test)]
+mod renderer_test;

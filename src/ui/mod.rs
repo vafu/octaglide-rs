@@ -1,6 +1,5 @@
 mod buttons;
 mod controller;
-#[cfg(target_os = "none")]
 mod display;
 mod encoder;
 mod envelope_plot;
@@ -11,6 +10,7 @@ mod snapshot;
 pub use buttons::{take_next_release, ButtonDebouncer};
 pub use controller::{Controller, UiEvent};
 pub(crate) use envelope_plot::envelope_plot_level;
+pub use display::draw_snapshot;
 #[cfg(target_os = "none")]
 pub use display::run_envelope_display;
 pub use encoder::EncoderDecoder;

@@ -9,6 +9,7 @@ publish = false
 
 [dependencies]
 critical-section = { version = "1.2.0", features = ["std"] }
+embedded-graphics = "0.8"
 enum_dispatch = "0.3.13"
 futures = { version = "0.3.31", features = ["executor"] }
 heapless = "0.9.1"
