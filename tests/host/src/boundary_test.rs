@@ -1,12 +1,14 @@
 use std::{fs, path::Path};
 
-const FORBIDDEN: [&str; 6] = [
+const FORBIDDEN: [&str; 8] = [
     "teensy4_bsp",
     "teensy_usbhost",
     "cortex_m",
     "rtic::app",
     "rtic_monotonics",
     "tokio::",
+    "crate::teensy",
+    "crate::host",
 ];
 
 fn scan(dir: &str) -> Vec<String> {
@@ -40,6 +42,7 @@ fn portable_modules_have_no_platform_imports() {
     let violations: Vec<String> = scan("../../src/core")
         .into_iter()
         .chain(scan("../../src/runtime"))
+        .chain(scan("../../src/ui"))
         .collect();
     assert!(violations.is_empty(), "{violations:#?}");
 }

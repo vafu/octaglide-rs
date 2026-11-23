@@ -33,10 +33,6 @@ mod ui;
 #[path = "../../../src/host/input.rs"]
 mod host_input;
 
-mod app {
-    use rtic_sync::channel::Sender;
-    pub type Animator = Sender<'static, crate::core::Cmd, 1>;
-}
 
 #[cfg(test)]
 mod storage_test;
@@ -55,3 +51,6 @@ mod host_input_test;
 
 #[cfg(test)]
 mod boundary_test;
+
+#[cfg(test)]
+mod host_loop_test;

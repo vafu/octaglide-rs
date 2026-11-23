@@ -6,31 +6,31 @@ use rtic_sync::{
 };
 
 use crate::{
-    app_event::AppEvent,
+    app_event::{AppEvent, APP_EVENT_CAPACITY},
     core::{AnimationEngine, Cmd, VoiceAnimators, ANIMATORS_PER_VOICE, MAX_VOICES},
-    output::OutputMessage,
-    ui::{ButtonEdge, DisplaySnapshot},
+    output::{OutputMessage, OUTPUT_CHANNEL_CAPACITY},
+    ui::{ButtonEdge, DisplaySnapshot, BUTTON_QUEUE_CAPACITY},
 };
 
 /// Owns the channels shared by every platform runtime task.
 ///
 /// Construct once, then call [`RuntimeStorage::split`] to hand out endpoints.
 pub struct RuntimeStorage {
-    pub output: Channel<OutputMessage, 32>,
-    pub app: Channel<AppEvent, 16>,
-    pub buttons: Channel<ButtonEdge, 16>,
+    pub output: Channel<OutputMessage, OUTPUT_CHANNEL_CAPACITY>,
+    pub app: Channel<AppEvent, APP_EVENT_CAPACITY>,
+    pub buttons: Channel<ButtonEdge, BUTTON_QUEUE_CAPACITY>,
     pub ui: Signal<DisplaySnapshot>,
     pub animators: [[Channel<Cmd, 1>; ANIMATORS_PER_VOICE]; MAX_VOICES],
 }
 
 /// Split endpoints for a [`RuntimeStorage`].
 pub struct RuntimeHandles {
-    pub output_sender: rtic_sync::channel::Sender<'static, OutputMessage, 32>,
-    pub output_receiver: rtic_sync::channel::Receiver<'static, OutputMessage, 32>,
-    pub app_sender: rtic_sync::channel::Sender<'static, AppEvent, 16>,
-    pub app_receiver: rtic_sync::channel::Receiver<'static, AppEvent, 16>,
-    pub button_sender: rtic_sync::channel::Sender<'static, ButtonEdge, 16>,
-    pub button_receiver: rtic_sync::channel::Receiver<'static, ButtonEdge, 16>,
+    pub output_sender: crate::output::OutputSender,
+    pub output_receiver: crate::output::OutputReceiver,
+    pub app_sender: crate::app_event::AppSender,
+    pub app_receiver: crate::app_event::AppReceiver,
+    pub button_sender: crate::ui::ButtonSender,
+    pub button_receiver: crate::ui::ButtonReceiver,
     pub ui_writer: rtic_sync::signal::SignalWriter<'static, DisplaySnapshot>,
     pub ui_reader: rtic_sync::signal::SignalReader<'static, DisplaySnapshot>,
     pub animators: [VoiceAnimators; MAX_VOICES],

@@ -29,6 +29,7 @@ static STORAGE: StaticCell<RuntimeStorage> = StaticCell::new();
 
 /// Runs the host application.
 pub fn run() -> ! {
+    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_time()
         .build()
@@ -74,8 +75,10 @@ async fn application() {
 
     let mut ui_reader = ui_reader;
     loop {
-        let snapshot = ui_reader.wait().await;
-        display.render(&snapshot);
+        tokio::select! {
+            snapshot = ui_reader.wait() => display.render(&snapshot),
+            _ = tokio::time::sleep(std::time::Duration::from_millis(16)) => {}
+        }
         for event in display.events() {
             match event {
                 SimulatorEvent::Quit => std::process::exit(0),

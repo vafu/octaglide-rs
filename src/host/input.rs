@@ -32,6 +32,7 @@ pub enum HostEvent {
 pub struct HostInput {
     sliders: [u16; 4],
     velocity: u8,
+    usb_connected: bool,
 }
 
 impl HostInput {
@@ -39,6 +40,7 @@ impl HostInput {
         Self {
             sliders: [u16::MAX / 2; 4],
             velocity: 100,
+            usb_connected: false,
         }
     }
 
@@ -83,8 +85,9 @@ impl HostInput {
                 Some(HostEvent::App(AppEvent::Midi(msg)))
             }
             HostKey::UsbToggle if pressed => {
+                self.usb_connected = !self.usb_connected;
                 Some(HostEvent::App(AppEvent::Ui(UiEvent::UsbConnection {
-                    connected: true,
+                    connected: self.usb_connected,
                 })))
             }
             _ => None,

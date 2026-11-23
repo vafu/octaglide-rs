@@ -98,4 +98,8 @@ fn out_of_bounds_drawing_is_ignored() {
     let mut display = TestDisplay::new();
     draw_snapshot(&mut display, &passthrough_snapshot()).unwrap();
     assert_eq!(display.size(), Size::new(128, 64));
+    // Every lit pixel must lie inside the panel; TestDisplay drops OOB points,
+    // so a renderer that drew outside would otherwise pass silently.
+    assert!(display.lit_pixels() > 0);
+    assert_eq!(display.pixels.len(), 128 * 64);
 }

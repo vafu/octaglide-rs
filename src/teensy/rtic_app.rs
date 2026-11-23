@@ -2,32 +2,24 @@
 mod app {
 
     use crate::{
-        app_event::{AppEvent, AppReceiver, AppSender},
-        core::{
-            AnimationEngine, Core, Cmd, VoiceAnimators, ANIMATORS_PER_VOICE,
-            MAX_VOICES,
-        },
+        app_event::{AppReceiver, AppSender},
+        core::{AnimationEngine, Core, ANIMATORS_PER_VOICE, MAX_VOICES},
         midi::{MidiBus, MidiController},
-        output::{OutputMessage, OutputReceiver, OutputSender},
+        output::{OutputReceiver, OutputSender},
+        runtime::RuntimeStorage,
         teensy::{
             SystickClock, UartMidiBus, UsbMidiBus,
             hardware::{handle_buttons_gpio3_interrupt, handle_buttons_gpio4_interrupt, handle_encoder_interrupt},
             midi::Bus,
         },
-        ui::{
-            ButtonEdge, ButtonReceiver, ButtonSender, DisplaySnapshot, EncoderDecoder,
-            UiReader, BUTTON_QUEUE_CAPACITY,
-        },
+        ui::{ButtonReceiver, ButtonSender, EncoderDecoder, UiReader},
     };
     use board::t41 as brd;
     use embedded_alloc::LlffHeap as Heap;
     use imxrt_log as logging;
     use cortex_m::interrupt;
-    use rtic_monotonics::{
-        Monotonic,
-        systick::{Systick, *},
-    };
-    use rtic_sync::{make_channel, make_signal};
+    use rtic_monotonics::systick::{Systick, *};
+    use static_cell::StaticCell;
     use teensy_usbhost as usbhost;
     use teensy4_bsp::{
         board,
@@ -51,25 +43,7 @@ mod app {
     pub type MidiSender = OutputSender;
     pub type MidiReceiver = OutputReceiver;
 
-    // Each expansion reserves three distinct static channels for one voice.
-    macro_rules! make_voice_animators {
-        () => {{
-            let (glide, glide_rx) = make_channel!(Cmd, 1);
-            let (first, first_rx) = make_channel!(Cmd, 1);
-            let (second, second_rx) = make_channel!(Cmd, 1);
-            (
-                VoiceAnimators {
-                    glide,
-                    envelopes: [first, second],
-                },
-                [
-                    AnimationEngine::new(glide_rx),
-                    AnimationEngine::new(first_rx),
-                    AnimationEngine::new(second_rx),
-                ],
-            )
-        }};
-    }
+    static STORAGE: StaticCell<RuntimeStorage> = StaticCell::new();
 
     const HEAP_SIZE: usize = 1024;
     const MIDI_BAUD: u32 = 31250;
@@ -161,20 +135,13 @@ mod app {
         });
         log::set_max_level(configured_log_level());
 
-        let (output_sender, output_receiver) = make_channel!(OutputMessage, 32);
-        let (core_sender, core_receiver) = make_channel!(AppEvent, 16);
-        let (button_sender, button_receiver) = make_channel!(ButtonEdge, BUTTON_QUEUE_CAPACITY);
+        let handles = STORAGE.init(RuntimeStorage::new()).split();
+        let mut output_sender = handles.output_sender;
+        let core_sender = handles.app_sender;
+        let button_sender = handles.button_sender;
         let midi_controller = MidiController::new();
 
-        let (first, first_engines) = make_voice_animators!();
-        let (second, second_engines) = make_voice_animators!();
-        let (third, third_engines) = make_voice_animators!();
-        let (fourth, fourth_engines) = make_voice_animators!();
-        animate_voices::spawn(
-            [first_engines, second_engines, third_engines, fourth_engines],
-            output_sender.clone(),
-        )
-        .unwrap();
+        animate_voices::spawn(handles.engines, output_sender.clone()).unwrap();
 
         // The reset button connects P7 to ground, so use a pullup and falling-edge interrupt.
         iomuxc::configure(
@@ -223,11 +190,10 @@ mod app {
         let slider3 = adc::AnalogInput::new(pins.p27);
 
         let i2c = board::lpi2c(lpi2c1, pins.p19, pins.p18, board::Lpi2cClockSpeed::KHz400);
-        let (ui_writer, ui_reader) = make_signal!(DisplaySnapshot);
-        oled_task::spawn(i2c, ui_reader).ok();
+        oled_task::spawn(i2c, handles.ui_reader).ok();
 
-        midi_dispatch::spawn(output_receiver, midi_controller).unwrap();
-        core_task::spawn(core_receiver, output_sender.clone(), ui_writer).unwrap();
+        midi_dispatch::spawn(handles.output_receiver, midi_controller).unwrap();
+        core_task::spawn(handles.app_receiver, output_sender.clone(), handles.ui_writer).unwrap();
         usb_host_maintenance::spawn(core_sender.clone()).unwrap();
 
         // Create UART bus for RX
@@ -240,7 +206,7 @@ mod app {
         let enc_button_sender = button_sender.clone();
         let buttons_gpio3_sender = button_sender.clone();
         let buttons_gpio4_sender = button_sender;
-        button_task::spawn(button_receiver, core_sender.clone()).unwrap();
+        button_task::spawn(handles.button_receiver, core_sender.clone()).unwrap();
         read_sliders::spawn(core_sender).unwrap();
 
         // Create USB bus for TX
@@ -253,7 +219,7 @@ mod app {
             Local {
                 tx_bus: Bus::Usb(usb_bus),
                 led: board::led(&mut gpio2, pins.p13),
-                core: Core::new(output_sender.clone(), [first, second, third, fourth]),
+                core: Core::new(output_sender.clone(), handles.animators),
                 reset_btn,
                 button1,
                 button2,

@@ -26,3 +26,22 @@ fn button_key_emits_a_debounced_edge() {
         }))
     ));
 }
+
+#[test]
+fn usb_toggle_flips_both_directions() {
+    let mut input = HostInput::new();
+    let first = input.handle(HostKey::UsbToggle, true, 0);
+    let second = input.handle(HostKey::UsbToggle, true, 1);
+    assert!(matches!(
+        first,
+        Some(HostEvent::App(crate::app_event::AppEvent::Ui(
+            crate::ui::UiEvent::UsbConnection { connected: true }
+        )))
+    ));
+    assert!(matches!(
+        second,
+        Some(HostEvent::App(crate::app_event::AppEvent::Ui(
+            crate::ui::UiEvent::UsbConnection { connected: false }
+        )))
+    ));
+}

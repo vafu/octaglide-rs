@@ -20,7 +20,7 @@ teensy = [
     "dep:teensy4-bsp",
     "dep:teensy4-fcb",
 ]
-host = ["dep:tokio", "dep:embedded-graphics-simulator", "dep:critical-section"]
+host = ["dep:tokio", "dep:embedded-graphics-simulator", "dep:critical-section", "dep:env_logger"]
 
 [dependencies]
 rtic = { version = "2", features = ["thumbv7-backend"], optional = true }
@@ -60,7 +60,7 @@ optional = true
 
 [dependencies.tokio]
 version = "1"
-features = ["rt", "time"]
+features = ["rt", "time", "macros"]
 optional = true
 
 [dependencies.embedded-graphics-simulator]
@@ -70,6 +70,10 @@ optional = true
 [dependencies.critical-section]
 version = "1.2"
 features = ["std"]
+optional = true
+
+[dependencies.env_logger]
+version = "0.11"
 optional = true
 
 [target.'cfg(not(target_os = "none"))'.dependencies.futures]
