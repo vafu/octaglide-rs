@@ -79,11 +79,11 @@ mod app {
     use board::t41 as brd;
     use embedded_alloc::LlffHeap as Heap;
     use imxrt_log as logging;
-    use rtic_monotonics::systick::{Systick, *};
-    use rtic_sync::{
-        channel::Sender,
-        make_channel, make_signal,
+    use rtic_monotonics::{
+        Monotonic,
+        systick::{Systick, *},
     };
+    use rtic_sync::{make_channel, make_signal};
     use teensy_usbhost as usbhost;
     use teensy4_bsp::{
         board,
@@ -130,6 +130,21 @@ mod app {
     const HEAP_SIZE: usize = 1024;
     const MIDI_BAUD: u32 = 31250;
     pub(crate) static mut POLLER: Option<logging::Poller> = None;
+
+    pub struct SystickClock;
+
+    impl crate::core::Clock for SystickClock {
+        fn now_ms() -> u32 {
+            rtic_monotonics::systick::Systick::now()
+                .duration_since_epoch()
+                .to_millis()
+        }
+
+        async fn delay_ms(ms: u32) {
+            use rtic_monotonics::systick::ExtU32;
+            rtic_monotonics::systick::Systick::delay(ms.millis()).await
+        }
+    }
 
     #[shared]
     struct Shared {
@@ -521,7 +536,7 @@ mod app {
         engines: [[AnimationEngine; ANIMATORS_PER_VOICE]; MAX_VOICES],
         sender: MidiSender,
     ) {
-        crate::anim::run_animations(engines, sender).await
+        crate::anim::run_animations::<SystickClock>(engines, sender).await
     }
 
     #[task(priority = 2)]

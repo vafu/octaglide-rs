@@ -1,6 +1,7 @@
 //! Core's semantic voice, consumer, and control model.
 
 mod animator;
+mod clock;
 mod consumers;
 mod control;
 mod core;
@@ -14,6 +15,7 @@ use crate::output::OutputSender;
 pub use self::animator::{
     ANIMATORS_PER_VOICE, Animator, AnimationEngine, Cmd, Settings, VoiceAnimators,
 };
+pub use self::clock::Clock;
 pub use self::consumers::{
     Consumer, ConsumerKind, Consumers, CONTROL_SLOTS,
 };

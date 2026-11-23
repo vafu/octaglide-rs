@@ -22,6 +22,27 @@ fn voice_outputs() -> (Sender<'static, OutputMessage, 32>, Receiver<'static, Out
     channel()
 }
 
+struct TestClock;
+
+impl crate::core::Clock for TestClock {
+    fn now_ms() -> u32 {
+        0
+    }
+
+    async fn delay_ms(_ms: u32) {}
+}
+
+#[test]
+fn animation_engine_accepts_a_platform_clock() {
+    let _guard = TEST_NOTES.lock().unwrap();
+    block_on(async {
+        let (sender, receiver) = channel();
+        drop(sender);
+        let mut engine = crate::core::AnimationEngine::new(receiver);
+        assert!(engine.tick::<TestClock>().await.is_none());
+    });
+}
+
 fn note_on(voice: VoiceId, note: u8) -> Input {
     Input::NoteOn {
         voice,

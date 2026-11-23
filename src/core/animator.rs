@@ -1,11 +1,8 @@
 use futures::FutureExt;
 use log::debug;
-use rtic_monotonics::{Monotonic, systick::{Systick, fugit::Instant}};
-#[cfg(target_os = "none")]
-use rtic_monotonics::systick::ExtU32;
 use rtic_sync::channel::Receiver;
 
-use super::{Messages, Modulation, Modulator, VoiceOutput};
+use super::{Clock, Messages, Modulation, Modulator, VoiceOutput};
 
 #[derive(Debug)]
 pub struct AnimationEngine {
@@ -21,7 +18,7 @@ pub struct AnimationEngine {
 enum State {
     Idle,
     Animating {
-        last_updated: Instant<u32, 1, 1000>,
+        last_updated: u32,
         progress_at: f32,
     },
 }
@@ -41,9 +38,9 @@ impl AnimationEngine {
         }
     }
 
-    pub async fn tick(&mut self) -> Messages {
+    pub async fn tick<C: Clock>(&mut self) -> Messages {
         match self.state {
-            State::Idle => self.recv_cmd().await,
+            State::Idle => self.recv_cmd::<C>().await,
             State::Animating {
                 last_updated,
                 progress_at: progress,
@@ -54,11 +51,11 @@ impl AnimationEngine {
                 let duration = modulator.duration_ms().await;
 
                 futures::select_biased! {
-                    new_msg = self.recv_cmd().fuse() => new_msg,
-                    _ = animation_delay().fuse() => {
-                        let now = Systick::now();
-                        let elapsed = now - last_updated;
-                        let progress_delta = if duration == 0 { 1.0 } else { elapsed.to_millis() as f32 / duration as f32 };
+                    new_msg = self.recv_cmd::<C>().fuse() => new_msg,
+                    _ = C::delay_ms(MSG_INTERVAL_MS).fuse() => {
+                        let now = C::now_ms();
+                        let elapsed = now.wrapping_sub(last_updated);
+                        let progress_delta = if duration == 0 { 1.0 } else { elapsed as f32 / duration as f32 };
                         let new_progress = (progress + progress_delta).clamp(0.0, 1.0);
                         let res = self.modulator.as_mut()?.animate(new_progress, 1.0, 1.0).await;
                         if new_progress >= 1.0 {
@@ -114,7 +111,7 @@ impl AnimationEngine {
         }
     }
 
-    async fn recv_cmd(&mut self) -> Messages {
+    async fn recv_cmd<C: Clock>(&mut self) -> Messages {
         let Ok(cmd) = self.rx.recv().await else {
             log::error!("error receiving Animator cmd");
             return None;
@@ -128,7 +125,7 @@ impl AnimationEngine {
                     heapless::Vec::new()
                 };
                 self.state = State::Animating {
-                    last_updated: Systick::now(),
+                    last_updated: C::now_ms(),
                     progress_at: 0.0,
                 };
                 self.modulator = Some(modulator);
@@ -159,13 +156,6 @@ impl AnimationEngine {
             }
         }
     }
-}
-
-async fn animation_delay() {
-    #[cfg(target_os = "none")]
-    Systick::delay(MSG_INTERVAL_MS.millis()).await;
-    #[cfg(not(target_os = "none"))]
-    core::future::pending::<()>().await;
 }
 
 fn is_continuous(msg: &VoiceOutput) -> bool {
