@@ -3,7 +3,7 @@ use rtic_monotonics::{
     systick::{ExtU32, Systick},
 };
 
-use super::{ButtonDebouncer, ButtonEdge, ButtonReceiver, ButtonSender, ENCODER_BUTTON_INDEX};
+use crate::ui::{ButtonEdge, ButtonSender, ENCODER_BUTTON_INDEX};
 use crate::{
     app::CoreSender,
     app_event::AppEvent,

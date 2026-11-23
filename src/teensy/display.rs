@@ -1,9 +1,10 @@
+//! SH1106 OLED driver loop.
+
 use rtic_monotonics::systick::{ExtU32, Systick};
 use sh1106::{Builder, displayrotation::DisplayRotation, mode::GraphicsMode};
 use teensy4_bsp::board;
 
-use super::draw_snapshot;
-use crate::ui::UiReader;
+use crate::ui::{UiReader, draw_snapshot};
 
 pub async fn run_envelope_display(i2c: board::Lpi2c1, mut updates: UiReader) {
     Systick::delay(1000.millis()).await;

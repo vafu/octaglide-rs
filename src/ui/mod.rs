@@ -3,22 +3,13 @@ mod controller;
 mod display;
 mod encoder;
 mod envelope_plot;
-#[cfg(target_os = "none")]
-mod hardware;
 mod snapshot;
 
 pub use buttons::{take_next_release, ButtonDebouncer};
 pub use controller::{Controller, UiEvent};
 pub(crate) use envelope_plot::envelope_plot_level;
 pub use display::draw_snapshot;
-#[cfg(target_os = "none")]
-pub use display::run_envelope_display;
 pub use encoder::EncoderDecoder;
-#[cfg(target_os = "none")]
-pub use hardware::{
-    handle_buttons_gpio3_interrupt, handle_buttons_gpio4_interrupt, handle_encoder_interrupt,
-    read_sliders,
-};
 
 #[cfg(test)]
 mod test;
