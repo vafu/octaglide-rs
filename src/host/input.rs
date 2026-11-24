@@ -139,8 +139,13 @@ impl HostInput {
 }
 
 /// Maps a display point to the slider strip containing it.
+///
+/// The PCB runs Attack, Decay, Sustain, Release left to right (P27..P24),
+/// while the firmware indexes Release as 0. So the leftmost strip is the
+/// highest index.
 fn slider_index(point: Point) -> u8 {
-    (point.x.clamp(0, SLIDER_ZONE_WIDTH * 4 - 1) / SLIDER_ZONE_WIDTH) as u8
+    let strip = (point.x.clamp(0, SLIDER_ZONE_WIDTH * 4 - 1) / SLIDER_ZONE_WIDTH) as u8;
+    3 - strip
 }
 
 /// Maps vertical position to 0..=u16::MAX, bottom of the panel = 0.

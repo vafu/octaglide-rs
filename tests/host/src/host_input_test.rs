@@ -50,9 +50,10 @@ fn usb_toggle_flips_both_directions() {
 fn display_is_split_into_four_slider_strips() {
     use embedded_graphics::geometry::Point;
 
+    // Leftmost strip is Attack (index 3); rightmost is Release (index 0).
     let mut input = HostInput::new();
-    for index in 0..4u8 {
-        let x = index as i32 * 32 + 16;
+    for (strip, index) in [3u8, 2, 1, 0].into_iter().enumerate() {
+        let x = strip as i32 * 32 + 16;
         match input.pointer_down(Point::new(x, 0)) {
             Some(HostEvent::App(crate::app_event::AppEvent::Ui(
                 crate::ui::UiEvent::Slider { index: got, value },
@@ -70,13 +71,14 @@ fn drag_keeps_the_strip_where_it_started() {
     use embedded_graphics::geometry::Point;
 
     let mut input = HostInput::new();
+    // Leftmost strip is Attack (index 3).
     input.pointer_down(Point::new(10, 32));
-    // Move far right; the drag must stay on slider 0.
+    // Move far right; the drag must stay on the strip where it started.
     match input.pointer_move(Point::new(120, 63)) {
         Some(HostEvent::App(crate::app_event::AppEvent::Ui(
             crate::ui::UiEvent::Slider { index, value },
         ))) => {
-            assert_eq!(index, 0);
+            assert_eq!(index, 3);
             assert_eq!(value, 0, "bottom of the strip is zero");
         }
         other => panic!("unexpected event: {other:?}"),
