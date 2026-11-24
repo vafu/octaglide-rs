@@ -111,16 +111,11 @@ where
 pub struct CcFilter {
     pub cc: u8,
     pub channel: u8,
-    pub dropped: u64,
 }
 
 impl CcFilter {
     pub fn new(cc: u8, channel: u8) -> Self {
-        Self {
-            cc,
-            channel,
-            dropped: 0,
-        }
+        Self { cc, channel }
     }
 
     /// Returns the value when this change matches the filter.

@@ -1,7 +1,5 @@
 //! Rolling scope window.
 
-use std::time::Instant;
-
 use ringbuf::{
     HeapCons,
     traits::Consumer,
@@ -22,25 +20,18 @@ pub struct ScopeApp {
     options: Options,
     /// Ring B: uniform samples produced by the acquisition stage.
     samples: HeapCons<Sample>,
-    /// What the plot draws: bounded, time-expired.
+    /// What the plot draws: a fixed-rate ring of values.
     trace: Trace,
-    start: Instant,
     port_name: String,
     error: Option<String>,
 }
 
 impl ScopeApp {
-    pub fn new(
-        options: Options,
-        samples: HeapCons<Sample>,
-        start: Instant,
-        port_name: String,
-    ) -> Self {
+    pub fn new(options: Options, samples: HeapCons<Sample>, port_name: String) -> Self {
         Self {
             options,
             samples,
             trace: Trace::with_capacity(DISPLAY_CAPACITY),
-            start,
             port_name,
             error: None,
         }
@@ -66,12 +57,12 @@ impl eframe::App for ScopeApp {
             self.trace.push(value);
         }
 
-        let (title, window) = describe(&self.options, &self.port_name);
-        let window = window.unwrap_or(WINDOW_SECS);
+        let title = describe(&self.options, &self.port_name);
+        let window = WINDOW_SECS;
 
         egui::Panel::top("header")
             .exact_size(18.0)
-            .show_inside(ui, |ui| {
+            .show(ui, |ui| {
                 ui.horizontal_centered(|ui| {
                     ui.spacing_mut().item_spacing.x = 8.0;
                     ui.small(title);
@@ -82,23 +73,17 @@ impl eframe::App for ScopeApp {
                 });
             });
 
-        egui::CentralPanel::default().show_inside(ui, |ui| {
+        egui::CentralPanel::default().show(ui, |ui| {
             draw_plot(ui, &mut self.trace, self.options.color);
         });
     }
 }
 
-/// Title text and optional window override for the configured mode.
-pub fn describe(options: &Options, port_name: &str) -> (String, Option<f64>) {
+/// Window title for the configured mode.
+pub fn describe(options: &Options, port_name: &str) -> String {
     match options.mode {
-        Mode::Cc { cc, channel } => (
-            format!("CC {cc}  ch {}  [{}]", channel + 1, port_name),
-            None,
-        ),
-        Mode::Notes { channel } => (
-            format!("notes  ch {}  [{}]", channel + 1, port_name),
-            None,
-        ),
+        Mode::Cc { cc, channel } => format!("CC {cc}  ch {}  [{}]", channel + 1, port_name),
+        Mode::Notes { channel } => format!("notes  ch {}  [{}]", channel + 1, port_name),
     }
 }
 

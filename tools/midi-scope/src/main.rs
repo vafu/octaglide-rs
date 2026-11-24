@@ -45,7 +45,6 @@ fn main() -> std::process::ExitCode {
     let (display_prod, display_cons) = HeapRb::<Sample>::new(acq::DISPLAY_CAPACITY).split();
 
     let filter = CcFilter::new(cc, channel);
-    let start = std::time::Instant::now();
 
     let connection = midi::open(&options.port, move |_timestamp, bytes, _data| {
         let changes = midi::decode_control_changes(bytes);
@@ -97,7 +96,7 @@ fn main() -> std::process::ExitCode {
         }
     );
 
-    let mut scope = ScopeApp::new(options, display_cons, start, port_name);
+    let mut scope = ScopeApp::new(options, display_cons, port_name);
     if let Some(error) = open_error {
         scope = scope.with_error(error);
     }
