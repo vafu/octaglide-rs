@@ -106,6 +106,10 @@ where
     Ok((connection, name))
 }
 
+/// Upper bound on samples kept per scope. At ~200 events/s over a 10 s window
+/// this is ~2k; anything beyond drops the oldest.
+pub const TRACE_CAPACITY: usize = 2048;
+
 /// Keeps a trace updated from decoded control changes.
 pub struct CcTracker {
     pub trace: Trace,
@@ -116,7 +120,7 @@ pub struct CcTracker {
 impl CcTracker {
     pub fn new(cc: u8, channel: u8, window_secs: f64) -> Self {
         Self {
-            trace: Trace::new(window_secs),
+            trace: Trace::with_capacity(TRACE_CAPACITY, window_secs),
             cc,
             channel,
         }
@@ -223,6 +227,6 @@ mod tests {
             },
             1.0
         ));
-        assert_eq!(tracker.trace.samples(), &[(1.0, 55.0)]);
+        assert_eq!(tracker.trace.last(), Some((1.0, 55.0)));
     }
 }

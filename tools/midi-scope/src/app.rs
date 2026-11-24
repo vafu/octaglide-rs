@@ -25,6 +25,9 @@ pub struct ScopeApp {
     start: Instant,
     port_name: String,
     error: Option<String>,
+    frames: u64,
+    last_frames: u64,
+    last_report: f64,
 }
 
 impl ScopeApp {
@@ -35,6 +38,9 @@ impl ScopeApp {
             start: Instant::now(),
             port_name,
             error: None,
+            frames: 0,
+            last_frames: 0,
+            last_report: 0.0,
         }
     }
 
@@ -51,8 +57,22 @@ impl eframe::App for ScopeApp {
         ui.ctx()
             .request_repaint_after(std::time::Duration::from_millis(FRAME_MS));
 
-        let now = self.start.elapsed().as_secs_f64();
-        let tracker = self.tracker.lock().expect("tracker lock");
+        // TEMP: frame-rate probe
+        self.frames += 1;
+        let elapsed = self.start.elapsed().as_secs_f64();
+        if elapsed - self.last_report >= 1.0 {
+            eprintln!(
+                "[fps] {:.1} fps",
+                (self.frames - self.last_frames) as f64 / (elapsed - self.last_report)
+            );
+            self.last_report = elapsed;
+            self.last_frames = self.frames;
+        }
+
+        let now = elapsed;
+        let mut tracker = self.tracker.lock().expect("tracker lock");
+        // Time-based expiry so a silent input scrolls off instead of freezing.
+        tracker.trace.expire(now);
 
         let (title, window) = describe(&self.options, &self.port_name);
         let window = window.unwrap_or(tracker.trace.window());
@@ -71,7 +91,7 @@ impl eframe::App for ScopeApp {
             });
 
         egui::CentralPanel::default().show_inside(ui, |ui| {
-            draw_plot(ui, &tracker.trace, now, self.options.color, window);
+            draw_plot(ui, &mut tracker.trace, now, self.options.color, window);
         });
     }
 }
@@ -90,7 +110,7 @@ pub fn describe(options: &Options, port_name: &str) -> (String, Option<f64>) {
     }
 }
 
-fn draw_plot(ui: &mut egui::Ui, trace: &Trace, now: f64, color: Rgb, window: f64) {
+fn draw_plot(ui: &mut egui::Ui, trace: &mut Trace, now: f64, color: Rgb, window: f64) {
     let (response, painter) =
         ui.allocate_painter(ui.available_size(), egui::Sense::hover());
     let rect = response.rect;
@@ -115,19 +135,24 @@ fn draw_plot(ui: &mut egui::Ui, trace: &Trace, now: f64, color: Rgb, window: f64
         return;
     };
     let start = now - window;
-    let mut points: Vec<egui::Pos2> = trace
-        .samples()
-        .iter()
-        .map(|(at, value)| {
-            let x = ((at - start) / window).clamp(0.0, 1.0) as f32;
-            egui::pos2(rect.left() + x * rect.width(), value_to_y(rect, *value))
-        })
-        .collect();
+    let (first, second) = trace.slices();
+    let to_point = |(at, value): &(f64, f32)| {
+        let x = ((at - start) / window).clamp(0.0, 1.0) as f32;
+        egui::pos2(rect.left() + x * rect.width(), value_to_y(rect, *value))
+    };
+
+    let total = first.len() + second.len() + 1;
+    if total < 2 {
+        return;
+    }
+    // One allocation per frame, sized exactly; points come straight from the
+    // ring's own memory with no intermediate copy.
+    let mut points = Vec::with_capacity(total);
+    points.extend(first.iter().map(to_point));
+    points.extend(second.iter().map(to_point));
     // Hold the newest value out to "now" so the line is flat between events.
     points.push(egui::pos2(rect.right(), value_to_y(rect, last_value)));
-    if points.len() >= 2 {
-        painter.add(egui::Shape::line(points, stroke));
-    }
+    painter.add(egui::Shape::line(points, stroke));
 }
 
 fn value_to_y(rect: egui::Rect, value: f32) -> f32 {

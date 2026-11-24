@@ -29,24 +29,33 @@ fn main() -> std::process::ExitCode {
     };
 
     let verbose = options.verbose;
+    let _logger = match init_logging(verbose) {
+        Ok(handle) => handle,
+        Err(error) => {
+            eprintln!("midi-scope: could not start logger: {error}");
+            return std::process::ExitCode::FAILURE;
+        }
+    };
     let tracker = Arc::new(Mutex::new(CcTracker::new(cc, channel, 10.0)));
     let sink = Arc::clone(&tracker);
     let start = std::time::Instant::now();
 
     let connection = midi::open(&options.port, move |_timestamp, bytes, _data| {
         let now = start.elapsed().as_secs_f64();
-        let mut tracker = match sink.lock() {
-            Ok(tracker) => tracker,
-            Err(_) => return,
-        };
-        let messages = midi::decode_messages(bytes);
+        let changes = midi::decode_control_changes(bytes);
+
+        // Log and parse outside the lock: the UI thread needs it every frame,
+        // and a terminal write must never stall rendering.
         if verbose {
-            for message in &messages {
-                println!("{}", midi::describe(message));
+            for message in midi::decode_messages(bytes) {
+                log::info!("{}", midi::describe(&message));
             }
         }
-        for change in midi::decode_control_changes(bytes) {
-            tracker.apply(change, now);
+
+        if let Ok(mut tracker) = sink.lock() {
+            for change in changes {
+                tracker.apply(change, now);
+            }
         }
     });
 
@@ -100,4 +109,32 @@ fn main() -> std::process::ExitCode {
             std::process::ExitCode::FAILURE
         }
     }
+}
+
+/// Prints just the message, no level or timestamp noise.
+fn bare_format(
+    out: &mut dyn std::io::Write,
+    _now: &mut flexi_logger::DeferredNow,
+    record: &log::Record<'_>,
+) -> std::io::Result<()> {
+    writeln!(out, "{}", record.args())
+}
+
+/// Starts a buffered stdout logger.
+///
+/// `BufferAndFlush` batches lines and flushes on a timer, so a burst of MIDI
+/// messages costs one write per interval instead of one syscall per line.
+fn init_logging(verbose: bool) -> Result<flexi_logger::LoggerHandle, flexi_logger::FlexiLoggerError> {
+    use flexi_logger::{Logger, WriteMode};
+
+    // `try_with_str` takes a spec: "info" when monitoring, "off" for --quiet.
+    let spec = if verbose { "info" } else { "off" };
+    Logger::try_with_str(spec)?
+        .log_to_stdout()
+        .format(bare_format)
+        .write_mode(WriteMode::BufferAndFlushWith(
+            64 * 1024,
+            std::time::Duration::from_millis(100),
+        ))
+        .start()
 }
