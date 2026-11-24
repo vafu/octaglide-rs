@@ -27,11 +27,13 @@ impl std::fmt::Debug for Trace {
 }
 
 impl Trace {
+    /// Creates a full buffer of zeros, so the scope draws a flat line at 0
+    /// before any data arrives rather than an empty panel.
     pub fn with_capacity(capacity: usize) -> Self {
         assert!(capacity > 0, "trace capacity must be non-zero");
-        Self {
-            rb: HeapRb::new(capacity),
-        }
+        let mut rb = HeapRb::new(capacity);
+        while rb.try_push(0.0).is_ok() {}
+        Self { rb }
     }
 
     /// Appends a value, overwriting the oldest one when full.
@@ -58,13 +60,34 @@ mod tests {
     use super::*;
 
     #[test]
-    fn keeps_values_in_order() {
+    fn starts_prefilled_with_zeros() {
         let mut trace = Trace::with_capacity(8);
-        trace.push(0.0);
+        assert_eq!(trace.len(), 8, "buffer starts full");
+        let (first, second) = trace.slices();
+        assert!(first.iter().chain(second).all(|value| *value == 0.0));
+    }
+
+    #[test]
+    fn pushing_after_prefill_replaces_the_oldest() {
+        let mut trace = Trace::with_capacity(4);
+        trace.push(5.0);
+        assert_eq!(trace.len(), 4, "still full");
+        let (first, second) = trace.slices();
+        let values: Vec<_> = first.iter().chain(second).copied().collect();
+        assert_eq!(values, vec![0.0, 0.0, 0.0, 5.0], "newest at the right edge");
+    }
+
+    #[test]
+    fn keeps_values_in_order() {
+        let mut trace = Trace::with_capacity(4);
         trace.push(64.0);
         trace.push(127.0);
         let (a, b) = trace.slices();
-        assert_eq!(a.iter().chain(b).copied().collect::<Vec<_>>(), vec![0.0, 64.0, 127.0]);
+        assert_eq!(
+            a.iter().chain(b).copied().collect::<Vec<_>>(),
+            vec![0.0, 0.0, 64.0, 127.0],
+            "newest values sit at the right edge"
+        );
     }
 
     #[test]
@@ -79,21 +102,14 @@ mod tests {
     }
 
     #[test]
-    fn reads_do_not_grow_the_trace() {
+    fn reads_do_not_change_the_trace() {
         let mut trace = Trace::with_capacity(4);
         trace.push(5.0);
         for _ in 0..1000 {
             let (a, b) = trace.slices();
             let _ = a.len() + b.len();
         }
-        assert_eq!(trace.len(), 1);
-    }
-
-    #[test]
-    fn empty_trace_has_no_slices() {
-        let mut trace = Trace::with_capacity(4);
-        assert_eq!(trace.len(), 0);
-        assert_eq!(trace.slices(), (&[][..], &[][..]));
+        assert_eq!(trace.len(), 4);
     }
 
     #[test]
