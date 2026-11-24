@@ -12,4 +12,5 @@ flexi_logger = { version = "0.32", features = ["buffer_writer"] }
 log = "0.4"
 midir = "0.11"
 ringbuf = "0.6"
+atomic_float = "1.1"
 midi-msg = "0.8"

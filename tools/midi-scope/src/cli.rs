@@ -18,12 +18,6 @@ pub struct Rgb {
     pub b: u8,
 }
 
-impl Rgb {
-    pub const fn to_array(self) -> [u8; 3] {
-        [self.r, self.g, self.b]
-    }
-}
-
 impl fmt::Display for Rgb {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "#{:02x}{:02x}{:02x}", self.r, self.g, self.b)

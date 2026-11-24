@@ -6,12 +6,9 @@ mod cli;
 mod midi;
 mod trace;
 
-use ringbuf::{
-    HeapRb,
-    traits::{Producer, Split},
-};
+use ringbuf::{HeapRb, traits::Split};
 
-use acq::{Acquisition, INBOX_CAPACITY, SAMPLE_PERIOD, Sample};
+use acq::{Acquisition, SAMPLE_PERIOD, Sample};
 use app::ScopeApp;
 use cli::Mode;
 use midi::CcFilter;
@@ -41,17 +38,16 @@ fn main() -> std::process::ExitCode {
             return std::process::ExitCode::FAILURE;
         }
     };
-    // Ring A: MIDI callback -> acquisition stage.
-    let (mut inbox_prod, inbox_cons) = HeapRb::<Sample>::new(INBOX_CAPACITY).split();
-    // Ring B: acquisition stage -> UI.
+    // MIDI callback -> acquisition: one atomic holding the newest value.
+    let latest = acq::latest_slot();
+    let callback_latest = latest.clone();
+    // Acquisition -> UI: the uniform display stream.
     let (display_prod, display_cons) = HeapRb::<Sample>::new(acq::DISPLAY_CAPACITY).split();
 
     let filter = CcFilter::new(cc, channel);
     let start = std::time::Instant::now();
-    let callback_start = start;
 
     let connection = midi::open(&options.port, move |_timestamp, bytes, _data| {
-        let now = callback_start.elapsed().as_secs_f64();
         let changes = midi::decode_control_changes(bytes);
 
         // Logging happens off the hot path: no lock, and the logger batches.
@@ -63,19 +59,17 @@ fn main() -> std::process::ExitCode {
 
         for change in &changes {
             if let Some(value) = filter.matches(change) {
-                // Never block: if the acquisition stage is behind, drop.
-                let _ = inbox_prod.try_push((now, value));
+                acq::publish(&callback_latest, value);
             }
         }
     });
 
     // Acquisition: fixed-rate sampling between the two rings.
     std::thread::spawn(move || {
-        let mut acquisition = Acquisition::new(inbox_cons, display_prod);
+        let mut acquisition = Acquisition::new(latest, display_prod);
         let mut next = std::time::Instant::now();
         loop {
-            let now = start.elapsed().as_secs_f64();
-            acquisition.tick(now);
+            acquisition.tick();
             next += SAMPLE_PERIOD;
             let sleep = next.saturating_duration_since(std::time::Instant::now());
             std::thread::sleep(sleep);

@@ -39,7 +39,7 @@ impl ScopeApp {
         Self {
             options,
             samples,
-            trace: Trace::with_capacity(DISPLAY_CAPACITY, WINDOW_SECS),
+            trace: Trace::with_capacity(DISPLAY_CAPACITY),
             start,
             port_name,
             error: None,
@@ -62,14 +62,12 @@ impl eframe::App for ScopeApp {
         // Drain ring B into the display trace. Bounded and allocation-free:
         // the acquisition stage guarantees a uniform sample rate, so the plot
         // never depends on how bursty MIDI was.
-        while let Some((at, value)) = self.samples.try_pop() {
-            self.trace.push(at, value);
+        while let Some(value) = self.samples.try_pop() {
+            self.trace.push(value);
         }
-        let now = self.start.elapsed().as_secs_f64();
-        self.trace.expire(now);
 
         let (title, window) = describe(&self.options, &self.port_name);
-        let window = window.unwrap_or(self.trace.window());
+        let window = window.unwrap_or(WINDOW_SECS);
 
         egui::Panel::top("header")
             .exact_size(18.0)
@@ -85,7 +83,7 @@ impl eframe::App for ScopeApp {
             });
 
         egui::CentralPanel::default().show_inside(ui, |ui| {
-            draw_plot(ui, &mut self.trace, now, self.options.color, window);
+            draw_plot(ui, &mut self.trace, self.options.color);
         });
     }
 }
@@ -104,9 +102,8 @@ pub fn describe(options: &Options, port_name: &str) -> (String, Option<f64>) {
     }
 }
 
-fn draw_plot(ui: &mut egui::Ui, trace: &mut Trace, now: f64, color: Rgb, window: f64) {
-    let (response, painter) =
-        ui.allocate_painter(ui.available_size(), egui::Sense::hover());
+fn draw_plot(ui: &mut egui::Ui, trace: &mut Trace, color: Rgb) {
+    let (response, painter) = ui.allocate_painter(ui.available_size(), egui::Sense::hover());
     let rect = response.rect;
     painter.rect_filled(rect, 0.0, Color32::from_rgb(8, 8, 10));
 
@@ -117,35 +114,27 @@ fn draw_plot(ui: &mut egui::Ui, trace: &mut Trace, now: f64, color: Rgb, window:
     for value in [0.0f32, 63.5, 127.0] {
         let y = value_to_y(rect, value);
         painter.line_segment(
-            [
-                egui::pos2(rect.left(), y),
-                egui::pos2(rect.right(), y),
-            ],
+            [egui::pos2(rect.left(), y), egui::pos2(rect.right(), y)],
             grid,
         );
     }
 
-    let Some((_, last_value)) = trace.last() else {
-        return;
-    };
-    let start = now - window;
+    // Position in the buffer is time: the newest sample sits at the right edge.
+    let capacity = trace.capacity() as f32;
     let (first, second) = trace.slices();
-    let to_point = |(at, value): &(f64, f32)| {
-        let x = ((at - start) / window).clamp(0.0, 1.0) as f32;
-        egui::pos2(rect.left() + x * rect.width(), value_to_y(rect, *value))
-    };
-
-    let total = first.len() + second.len() + 1;
+    let total = first.len() + second.len();
     if total < 2 {
         return;
     }
-    // One allocation per frame, sized exactly; points come straight from the
-    // ring's own memory with no intermediate copy.
+
     let mut points = Vec::with_capacity(total);
-    points.extend(first.iter().map(to_point));
-    points.extend(second.iter().map(to_point));
-    // Hold the newest value out to "now" so the line is flat between events.
-    points.push(egui::pos2(rect.right(), value_to_y(rect, last_value)));
+    for (index, value) in first.iter().chain(second).enumerate() {
+        let x = (index as f32 + 1.0) / capacity;
+        points.push(egui::pos2(
+            rect.left() + x * rect.width(),
+            value_to_y(rect, *value),
+        ));
+    }
     painter.add(egui::Shape::line(points, stroke));
 }
 
