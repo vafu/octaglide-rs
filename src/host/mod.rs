@@ -49,7 +49,7 @@ async fn application() {
     let handles = STORAGE.init(RuntimeStorage::new()).split();
     let core: &'static mut Core =
         Box::leak(Box::new(Core::new(handles.output_sender.clone(), handles.animators)));
-    let midi: &'static mut HostMidiBus = Box::leak(Box::new(HostMidiBus::new()));
+    let midi: &'static mut HostMidiBus = Box::leak(Box::new(HostMidiBus::new("octaglide")));
     let mut display = HostDisplay::new();
     let mut input = HostInput::new();
     let start = Instant::now();

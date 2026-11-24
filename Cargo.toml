@@ -20,7 +20,7 @@ teensy = [
     "dep:teensy4-bsp",
     "dep:teensy4-fcb",
 ]
-host = ["dep:tokio", "dep:embedded-graphics-simulator", "dep:critical-section", "dep:env_logger"]
+host = ["dep:tokio", "dep:embedded-graphics-simulator", "dep:critical-section", "dep:env_logger", "dep:midir"]
 
 [dependencies]
 rtic = { version = "2", features = ["thumbv7-backend"], optional = true }
@@ -73,6 +73,10 @@ features = ["std"]
 optional = true
 
 [dependencies.env_logger]
+version = "0.11"
+optional = true
+
+[dependencies.midir]
 version = "0.11"
 optional = true
 
