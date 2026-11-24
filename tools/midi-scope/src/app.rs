@@ -1,46 +1,48 @@
 //! Rolling scope window.
 
-use std::{
-    sync::{Arc, Mutex},
-    time::Instant,
+use std::time::Instant;
+
+use ringbuf::{
+    HeapCons,
+    traits::Consumer,
 };
 
 use eframe::egui::{self, Color32, Stroke};
 
 use crate::{
+    acq::{DISPLAY_CAPACITY, Sample, WINDOW_SECS},
     cli::{Mode, Options, Rgb},
-    midi::CcTracker,
     trace::Trace,
 };
 
-/// Shared state written by the MIDI callback and read by the UI.
-pub type Shared = Arc<Mutex<CcTracker>>;
-
-/// Repaint interval; also the scope's time resolution.
+/// Repaint interval.
 const FRAME_MS: u64 = 33;
 
 pub struct ScopeApp {
     options: Options,
-    tracker: Shared,
+    /// Ring B: uniform samples produced by the acquisition stage.
+    samples: HeapCons<Sample>,
+    /// What the plot draws: bounded, time-expired.
+    trace: Trace,
     start: Instant,
     port_name: String,
     error: Option<String>,
-    frames: u64,
-    last_frames: u64,
-    last_report: f64,
 }
 
 impl ScopeApp {
-    pub fn new(options: Options, tracker: Shared, port_name: String) -> Self {
+    pub fn new(
+        options: Options,
+        samples: HeapCons<Sample>,
+        start: Instant,
+        port_name: String,
+    ) -> Self {
         Self {
             options,
-            tracker,
-            start: Instant::now(),
+            samples,
+            trace: Trace::with_capacity(DISPLAY_CAPACITY, WINDOW_SECS),
+            start,
             port_name,
             error: None,
-            frames: 0,
-            last_frames: 0,
-            last_report: 0.0,
         }
     }
 
@@ -57,25 +59,17 @@ impl eframe::App for ScopeApp {
         ui.ctx()
             .request_repaint_after(std::time::Duration::from_millis(FRAME_MS));
 
-        // TEMP: frame-rate probe
-        self.frames += 1;
-        let elapsed = self.start.elapsed().as_secs_f64();
-        if elapsed - self.last_report >= 1.0 {
-            eprintln!(
-                "[fps] {:.1} fps",
-                (self.frames - self.last_frames) as f64 / (elapsed - self.last_report)
-            );
-            self.last_report = elapsed;
-            self.last_frames = self.frames;
+        // Drain ring B into the display trace. Bounded and allocation-free:
+        // the acquisition stage guarantees a uniform sample rate, so the plot
+        // never depends on how bursty MIDI was.
+        while let Some((at, value)) = self.samples.try_pop() {
+            self.trace.push(at, value);
         }
-
-        let now = elapsed;
-        let mut tracker = self.tracker.lock().expect("tracker lock");
-        // Time-based expiry so a silent input scrolls off instead of freezing.
-        tracker.trace.expire(now);
+        let now = self.start.elapsed().as_secs_f64();
+        self.trace.expire(now);
 
         let (title, window) = describe(&self.options, &self.port_name);
-        let window = window.unwrap_or(tracker.trace.window());
+        let window = window.unwrap_or(self.trace.window());
 
         egui::Panel::top("header")
             .exact_size(18.0)
@@ -91,7 +85,7 @@ impl eframe::App for ScopeApp {
             });
 
         egui::CentralPanel::default().show_inside(ui, |ui| {
-            draw_plot(ui, &mut tracker.trace, now, self.options.color, window);
+            draw_plot(ui, &mut self.trace, now, self.options.color, window);
         });
     }
 }

@@ -1,15 +1,20 @@
 //! midi-scope: rolling MIDI monitor for a single CC or channel.
 
+mod acq;
 mod app;
 mod cli;
 mod midi;
 mod trace;
 
-use std::sync::{Arc, Mutex};
+use ringbuf::{
+    HeapRb,
+    traits::{Producer, Split},
+};
 
+use acq::{Acquisition, INBOX_CAPACITY, SAMPLE_PERIOD, Sample};
 use app::ScopeApp;
 use cli::Mode;
-use midi::CcTracker;
+use midi::CcFilter;
 
 fn main() -> std::process::ExitCode {
     let options = match cli::parse(std::env::args().skip(1)) {
@@ -36,26 +41,44 @@ fn main() -> std::process::ExitCode {
             return std::process::ExitCode::FAILURE;
         }
     };
-    let tracker = Arc::new(Mutex::new(CcTracker::new(cc, channel, 10.0)));
-    let sink = Arc::clone(&tracker);
+    // Ring A: MIDI callback -> acquisition stage.
+    let (mut inbox_prod, inbox_cons) = HeapRb::<Sample>::new(INBOX_CAPACITY).split();
+    // Ring B: acquisition stage -> UI.
+    let (display_prod, display_cons) = HeapRb::<Sample>::new(acq::DISPLAY_CAPACITY).split();
+
+    let filter = CcFilter::new(cc, channel);
     let start = std::time::Instant::now();
+    let callback_start = start;
 
     let connection = midi::open(&options.port, move |_timestamp, bytes, _data| {
-        let now = start.elapsed().as_secs_f64();
+        let now = callback_start.elapsed().as_secs_f64();
         let changes = midi::decode_control_changes(bytes);
 
-        // Log and parse outside the lock: the UI thread needs it every frame,
-        // and a terminal write must never stall rendering.
+        // Logging happens off the hot path: no lock, and the logger batches.
         if verbose {
             for message in midi::decode_messages(bytes) {
                 log::info!("{}", midi::describe(&message));
             }
         }
 
-        if let Ok(mut tracker) = sink.lock() {
-            for change in changes {
-                tracker.apply(change, now);
+        for change in &changes {
+            if let Some(value) = filter.matches(change) {
+                // Never block: if the acquisition stage is behind, drop.
+                let _ = inbox_prod.try_push((now, value));
             }
+        }
+    });
+
+    // Acquisition: fixed-rate sampling between the two rings.
+    std::thread::spawn(move || {
+        let mut acquisition = Acquisition::new(inbox_cons, display_prod);
+        let mut next = std::time::Instant::now();
+        loop {
+            let now = start.elapsed().as_secs_f64();
+            acquisition.tick(now);
+            next += SAMPLE_PERIOD;
+            let sleep = next.saturating_duration_since(std::time::Instant::now());
+            std::thread::sleep(sleep);
         }
     });
 
@@ -80,7 +103,7 @@ fn main() -> std::process::ExitCode {
         }
     );
 
-    let mut scope = ScopeApp::new(options, tracker, port_name);
+    let mut scope = ScopeApp::new(options, display_cons, start, port_name);
     if let Some(error) = open_error {
         scope = scope.with_error(error);
     }

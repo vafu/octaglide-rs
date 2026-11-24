@@ -3,7 +3,6 @@
 use midi_msg::{ChannelVoiceMsg, MidiMsg};
 use midir::{MidiInput, MidiInputConnection};
 
-use crate::trace::Trace;
 
 /// A decoded control change on a specific channel.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -106,33 +105,28 @@ where
     Ok((connection, name))
 }
 
-/// Upper bound on samples kept per scope. At ~200 events/s over a 10 s window
-/// this is ~2k; anything beyond drops the oldest.
-pub const TRACE_CAPACITY: usize = 2048;
-
-/// Keeps a trace updated from decoded control changes.
-pub struct CcTracker {
-    pub trace: Trace,
+/// Filters control changes and forwards matches into ring A.
+///
+/// Runs on the MIDI callback thread and never blocks or allocates.
+pub struct CcFilter {
     pub cc: u8,
     pub channel: u8,
+    pub dropped: u64,
 }
 
-impl CcTracker {
-    pub fn new(cc: u8, channel: u8, window_secs: f64) -> Self {
+impl CcFilter {
+    pub fn new(cc: u8, channel: u8) -> Self {
         Self {
-            trace: Trace::with_capacity(TRACE_CAPACITY, window_secs),
             cc,
             channel,
+            dropped: 0,
         }
     }
 
-    /// Applies one control change. Returns true when it matched this tracker.
-    pub fn apply(&mut self, change: ControlChange, now: f64) -> bool {
-        if change.channel != self.channel || change.control != self.cc {
-            return false;
-        }
-        self.trace.push(now, change.value as f32);
-        true
+    /// Returns the value when this change matches the filter.
+    pub fn matches(&self, change: &ControlChange) -> Option<f32> {
+        (change.channel == self.channel && change.control == self.cc)
+            .then_some(change.value as f32)
     }
 }
 
@@ -189,44 +183,41 @@ mod tests {
     }
 
     #[test]
-    fn tracker_ignores_other_controllers() {
-        let mut tracker = CcTracker::new(3, 0, 10.0);
-        assert!(!tracker.apply(
-            ControlChange {
+    fn filter_ignores_other_controllers() {
+        let filter = CcFilter::new(3, 0);
+        assert_eq!(
+            filter.matches(&ControlChange {
                 channel: 0,
                 control: 4,
                 value: 10
-            },
-            0.0
-        ));
-        assert!(tracker.trace.is_empty());
+            }),
+            None
+        );
     }
 
     #[test]
-    fn tracker_ignores_other_channels() {
-        let mut tracker = CcTracker::new(3, 0, 10.0);
-        assert!(!tracker.apply(
-            ControlChange {
+    fn filter_ignores_other_channels() {
+        let filter = CcFilter::new(3, 0);
+        assert_eq!(
+            filter.matches(&ControlChange {
                 channel: 1,
                 control: 3,
                 value: 10
-            },
-            0.0
-        ));
-        assert!(tracker.trace.is_empty());
+            }),
+            None
+        );
     }
 
     #[test]
-    fn tracker_records_matching_changes() {
-        let mut tracker = CcTracker::new(3, 0, 10.0);
-        assert!(tracker.apply(
-            ControlChange {
+    fn filter_passes_matching_changes() {
+        let filter = CcFilter::new(3, 0);
+        assert_eq!(
+            filter.matches(&ControlChange {
                 channel: 0,
                 control: 3,
                 value: 55
-            },
-            1.0
-        ));
-        assert_eq!(tracker.trace.last(), Some((1.0, 55.0)));
+            }),
+            Some(55.0)
+        );
     }
 }
