@@ -111,17 +111,39 @@ where
 pub struct CcFilter {
     pub cc: u8,
     pub channel: u8,
+    last: Option<u8>,
 }
 
 impl CcFilter {
     pub fn new(cc: u8, channel: u8) -> Self {
-        Self { cc, channel }
+        Self {
+            cc,
+            channel,
+            last: None,
+        }
     }
 
     /// Returns the value when this change matches the filter.
     pub fn matches(&self, change: &ControlChange) -> Option<f32> {
         (change.channel == self.channel && change.control == self.cc)
             .then_some(change.value as f32)
+    }
+
+    /// Classifies a matching change, flagging repeats of the last value.
+    ///
+    /// Deduplication lives on the producer side: a source that re-sends the
+    /// same value is a source bug worth seeing, so the point is still
+    /// published, just marked.
+    pub fn classify(&mut self, change: &ControlChange) -> Option<crate::acq::DataPoint> {
+        if !self.matches(change).is_some() {
+            return None;
+        }
+        let is_duplicate = self.last == Some(change.value);
+        self.last = Some(change.value);
+        Some(crate::acq::DataPoint {
+            value: change.value as f32,
+            is_duplicate,
+        })
     }
 }
 
@@ -213,6 +235,73 @@ mod tests {
                 value: 55
             }),
             Some(55.0)
+        );
+    }
+
+    fn cc(value: u8) -> ControlChange {
+        ControlChange {
+            channel: 0,
+            control: 3,
+            value,
+        }
+    }
+
+    #[test]
+    fn first_value_is_not_a_duplicate() {
+        let mut filter = CcFilter::new(3, 0);
+        assert_eq!(
+            filter.classify(&cc(10)),
+            Some(crate::acq::DataPoint {
+                value: 10.0,
+                is_duplicate: false
+            })
+        );
+    }
+
+    #[test]
+    fn repeated_value_is_flagged() {
+        let mut filter = CcFilter::new(3, 0);
+        filter.classify(&cc(10));
+        assert_eq!(
+            filter.classify(&cc(10)),
+            Some(crate::acq::DataPoint {
+                value: 10.0,
+                is_duplicate: true
+            })
+        );
+    }
+
+    #[test]
+    fn changed_value_clears_the_duplicate_state() {
+        let mut filter = CcFilter::new(3, 0);
+        filter.classify(&cc(10));
+        filter.classify(&cc(10));
+        assert_eq!(
+            filter.classify(&cc(11)).map(|point| point.is_duplicate),
+            Some(false)
+        );
+        assert_eq!(
+            filter.classify(&cc(11)).map(|point| point.is_duplicate),
+            Some(true)
+        );
+    }
+
+    #[test]
+    fn non_matching_changes_do_not_disturb_dedupe() {
+        let mut filter = CcFilter::new(3, 0);
+        filter.classify(&cc(10));
+        assert_eq!(
+            filter.classify(&ControlChange {
+                channel: 0,
+                control: 4,
+                value: 10
+            }),
+            None
+        );
+        assert_eq!(
+            filter.classify(&cc(10)).map(|point| point.is_duplicate),
+            Some(true),
+            "a different controller must not reset the last value"
         );
     }
 }

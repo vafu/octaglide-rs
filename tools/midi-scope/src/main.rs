@@ -44,7 +44,7 @@ fn main() -> std::process::ExitCode {
     // Acquisition -> UI: the uniform display stream.
     let (display_prod, display_cons) = HeapRb::<Sample>::new(acq::DISPLAY_CAPACITY).split();
 
-    let filter = CcFilter::new(cc, channel);
+    let mut filter = CcFilter::new(cc, channel);
 
     let connection = midi::open(&options.port, move |_timestamp, bytes, _data| {
         let changes = midi::decode_control_changes(bytes);
@@ -57,8 +57,8 @@ fn main() -> std::process::ExitCode {
         }
 
         for change in &changes {
-            if let Some(value) = filter.matches(change) {
-                acq::publish(&callback_latest, value);
+            if let Some(point) = filter.classify(change) {
+                acq::publish(&callback_latest, point);
             }
         }
     });

@@ -16,6 +16,12 @@ use crate::{
 /// Repaint interval.
 const FRAME_MS: u64 = 33;
 
+/// Half-width of the duplicate marker, in pixels.
+const MARKER_HALF: f32 = 6.0;
+
+/// Stroke width for duplicate markers; thicker than the trace so they read.
+const MARKER_STROKE: f32 = 2.0;
+
 pub struct ScopeApp {
     options: Options,
     /// Ring B: uniform samples produced by the acquisition stage.
@@ -113,14 +119,45 @@ fn draw_plot(ui: &mut egui::Ui, trace: &mut Trace, color: Rgb) {
     }
 
     let mut points = Vec::with_capacity(total);
-    for (index, value) in first.iter().chain(second).enumerate() {
-        let x = (index as f32 + 1.0) / capacity;
-        points.push(egui::pos2(
-            rect.left() + x * rect.width(),
-            value_to_y(rect, *value),
-        ));
+    let mut duplicates = Vec::new();
+    for (index, point) in first.iter().chain(second).enumerate() {
+        let at = sample_position(rect, index, capacity, point.value);
+        points.push(at);
+        if point.is_duplicate {
+            duplicates.push(at);
+        }
     }
     painter.add(egui::Shape::line(points, stroke));
+
+    // A duplicate is drawn as an X: the source re-sent the value it already had.
+    let marker_stroke = Stroke::new(MARKER_STROKE, Color32::from_rgb(255, 90, 90));
+    for at in duplicates {
+        draw_marker(&painter, at, MARKER_HALF, marker_stroke);
+    }
+}
+
+/// Where sample `index` of `capacity` is drawn.
+fn sample_position(rect: egui::Rect, index: usize, capacity: f32, value: f32) -> egui::Pos2 {
+    let x = (index as f32 + 1.0) / capacity;
+    egui::pos2(rect.left() + x * rect.width(), value_to_y(rect, value))
+}
+
+/// Draws an X centred on `at`.
+fn draw_marker(painter: &egui::Painter, at: egui::Pos2, half: f32, stroke: Stroke) {
+    painter.line_segment(
+        [
+            egui::pos2(at.x - half, at.y - half),
+            egui::pos2(at.x + half, at.y + half),
+        ],
+        stroke,
+    );
+    painter.line_segment(
+        [
+            egui::pos2(at.x - half, at.y + half),
+            egui::pos2(at.x + half, at.y - half),
+        ],
+        stroke,
+    );
 }
 
 fn value_to_y(rect: egui::Rect, value: f32) -> f32 {
