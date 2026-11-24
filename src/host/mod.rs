@@ -7,7 +7,10 @@ mod midi;
 
 use std::time::Instant;
 
-use embedded_graphics_simulator::{SimulatorEvent, sdl2::Keycode};
+use embedded_graphics_simulator::{
+    SimulatorEvent,
+    sdl2::{Keycode, MouseButton},
+};
 use static_cell::StaticCell;
 use tokio::task::LocalSet;
 
@@ -102,6 +105,19 @@ async fn application() {
                         );
                     }
                 }
+                SimulatorEvent::MouseButtonDown {
+                    point,
+                    mouse_btn: MouseButton::Left,
+                } => {
+                    dispatch(input.pointer_down(point), &mut app_sender, &mut button_sender);
+                }
+                SimulatorEvent::MouseMove { point } => {
+                    dispatch(input.pointer_move(point), &mut app_sender, &mut button_sender);
+                }
+                SimulatorEvent::MouseButtonUp {
+                    mouse_btn: MouseButton::Left,
+                    ..
+                } => input.pointer_up(),
                 SimulatorEvent::KeyUp { keycode, .. } => {
                     if let Some(key) = map_key(keycode) {
                         dispatch(

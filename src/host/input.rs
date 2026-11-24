@@ -1,5 +1,6 @@
 //! Keyboard-to-application event mapping.
 
+use embedded_graphics::geometry::Point;
 use midi_msg::{Channel, ChannelVoiceMsg, MidiMsg};
 
 use crate::{
@@ -33,7 +34,11 @@ pub struct HostInput {
     sliders: [u16; 4],
     velocity: u8,
     usb_connected: bool,
+    dragging: Option<u8>,
 }
+
+/// Display width split into one vertical strip per physical slider.
+const SLIDER_ZONE_WIDTH: i32 = 32;
 
 impl HostInput {
     pub fn new() -> Self {
@@ -41,6 +46,7 @@ impl HostInput {
             sliders: [u16::MAX / 2; 4],
             velocity: 100,
             usb_connected: false,
+            dragging: None,
         }
     }
 
@@ -94,6 +100,30 @@ impl HostInput {
         }
     }
 
+    /// Starts a drag in the strip under `point`, like grabbing a physical fader.
+    pub fn pointer_down(&mut self, point: Point) -> Option<HostEvent> {
+        let index = slider_index(point);
+        self.dragging = Some(index);
+        self.set_slider(index, slider_value(point.y))
+    }
+
+    /// Continues the active drag. Keeps the strip chosen on button-down.
+    pub fn pointer_move(&mut self, point: Point) -> Option<HostEvent> {
+        let index = self.dragging?;
+        self.set_slider(index, slider_value(point.y))
+    }
+
+    /// Ends the drag.
+    pub fn pointer_up(&mut self) {
+        self.dragging = None;
+    }
+
+    fn set_slider(&mut self, index: u8, value: u16) -> Option<HostEvent> {
+        let slot = self.sliders.get_mut(index as usize)?;
+        *slot = value;
+        Some(HostEvent::App(AppEvent::Ui(UiEvent::Slider { index, value })))
+    }
+
     fn slider(&mut self, index: u8, up: bool) -> Option<HostEvent> {
         let slot = self.sliders.get_mut(index as usize)?;
         *slot = if up {
@@ -106,4 +136,15 @@ impl HostInput {
             value: *slot,
         })))
     }
+}
+
+/// Maps a display point to the slider strip containing it.
+fn slider_index(point: Point) -> u8 {
+    (point.x.clamp(0, SLIDER_ZONE_WIDTH * 4 - 1) / SLIDER_ZONE_WIDTH) as u8
+}
+
+/// Maps vertical position to 0..=u16::MAX, bottom of the panel = 0.
+fn slider_value(y: i32) -> u16 {
+    let y = y.clamp(0, 63);
+    ((63 - y) as u32 * u16::MAX as u32 / 63) as u16
 }

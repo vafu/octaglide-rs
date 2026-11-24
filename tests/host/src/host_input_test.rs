@@ -45,3 +45,42 @@ fn usb_toggle_flips_both_directions() {
         )))
     ));
 }
+
+#[test]
+fn display_is_split_into_four_slider_strips() {
+    use embedded_graphics::geometry::Point;
+
+    let mut input = HostInput::new();
+    for index in 0..4u8 {
+        let x = index as i32 * 32 + 16;
+        match input.pointer_down(Point::new(x, 0)) {
+            Some(HostEvent::App(crate::app_event::AppEvent::Ui(
+                crate::ui::UiEvent::Slider { index: got, value },
+            ))) => {
+                assert_eq!(got, index);
+                assert_eq!(value, u16::MAX, "top of the strip is full scale");
+            }
+            other => panic!("unexpected event for strip {index}: {other:?}"),
+        }
+    }
+}
+
+#[test]
+fn drag_keeps_the_strip_where_it_started() {
+    use embedded_graphics::geometry::Point;
+
+    let mut input = HostInput::new();
+    input.pointer_down(Point::new(10, 32));
+    // Move far right; the drag must stay on slider 0.
+    match input.pointer_move(Point::new(120, 63)) {
+        Some(HostEvent::App(crate::app_event::AppEvent::Ui(
+            crate::ui::UiEvent::Slider { index, value },
+        ))) => {
+            assert_eq!(index, 0);
+            assert_eq!(value, 0, "bottom of the strip is zero");
+        }
+        other => panic!("unexpected event: {other:?}"),
+    }
+    input.pointer_up();
+    assert!(input.pointer_move(Point::new(10, 0)).is_none());
+}
