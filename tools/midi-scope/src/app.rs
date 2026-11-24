@@ -16,6 +16,9 @@ use crate::{
 /// Shared state written by the MIDI callback and read by the UI.
 pub type Shared = Arc<Mutex<CcTracker>>;
 
+/// Repaint interval; also the scope's time resolution.
+const FRAME_MS: u64 = 33;
+
 pub struct ScopeApp {
     options: Options,
     tracker: Shared,
@@ -43,12 +46,13 @@ impl ScopeApp {
 
 impl eframe::App for ScopeApp {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
-        // Keep repainting so the trace scrolls even when MIDI is idle.
-        ui.ctx().request_repaint();
+        // Cap the frame rate. Without this egui repaints as fast as the GPU
+        // allows, which pins a core even when nothing changes.
+        ui.ctx()
+            .request_repaint_after(std::time::Duration::from_millis(FRAME_MS));
 
         let now = self.start.elapsed().as_secs_f64();
-        let mut tracker = self.tracker.lock().expect("tracker lock");
-        tracker.trace.hold(now);
+        let tracker = self.tracker.lock().expect("tracker lock");
 
         let (title, window) = describe(&self.options, &self.port_name);
         let window = window.unwrap_or(tracker.trace.window());
@@ -67,7 +71,7 @@ impl eframe::App for ScopeApp {
             });
 
         egui::CentralPanel::default().show_inside(ui, |ui| {
-            draw_plot(ui, &tracker.trace, self.options.color, window);
+            draw_plot(ui, &tracker.trace, now, self.options.color, window);
         });
     }
 }
@@ -86,7 +90,7 @@ pub fn describe(options: &Options, port_name: &str) -> (String, Option<f64>) {
     }
 }
 
-fn draw_plot(ui: &mut egui::Ui, trace: &Trace, color: Rgb, window: f64) {
+fn draw_plot(ui: &mut egui::Ui, trace: &Trace, now: f64, color: Rgb, window: f64) {
     let (response, painter) =
         ui.allocate_painter(ui.available_size(), egui::Sense::hover());
     let rect = response.rect;
@@ -107,23 +111,23 @@ fn draw_plot(ui: &mut egui::Ui, trace: &Trace, color: Rgb, window: f64) {
         );
     }
 
-    let samples = trace.samples();
-    if samples.len() < 2 {
+    let Some((_, last_value)) = trace.last() else {
         return;
-    }
-    let now = samples.last().map(|(at, _)| *at).unwrap_or(0.0);
+    };
     let start = now - window;
-    let points: Vec<egui::Pos2> = samples
+    let mut points: Vec<egui::Pos2> = trace
+        .samples()
         .iter()
         .map(|(at, value)| {
             let x = ((at - start) / window).clamp(0.0, 1.0) as f32;
-            egui::pos2(
-                rect.left() + x * rect.width(),
-                value_to_y(rect, *value),
-            )
+            egui::pos2(rect.left() + x * rect.width(), value_to_y(rect, *value))
         })
         .collect();
-    painter.add(egui::Shape::line(points, stroke));
+    // Hold the newest value out to "now" so the line is flat between events.
+    points.push(egui::pos2(rect.right(), value_to_y(rect, last_value)));
+    if points.len() >= 2 {
+        painter.add(egui::Shape::line(points, stroke));
+    }
 }
 
 fn value_to_y(rect: egui::Rect, value: f32) -> f32 {

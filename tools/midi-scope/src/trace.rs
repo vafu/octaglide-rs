@@ -21,14 +21,6 @@ impl Trace {
         self.expire(now);
     }
 
-    /// Repeats the last value so the line holds flat between events.
-    pub fn hold(&mut self, now: f64) {
-        if let Some(&(_, value)) = self.samples.last() {
-            self.samples.push((now, value));
-            self.expire(now);
-        }
-    }
-
     fn expire(&mut self, now: f64) {
         let cutoff = now - self.window;
         let keep_from = self
@@ -41,6 +33,14 @@ impl Trace {
 
     pub fn samples(&self) -> &[(f64, f32)] {
         &self.samples
+    }
+
+    /// Time and value of the newest sample, if any.
+    ///
+    /// The plot extends this value to "now" when drawing, so the trace does not
+    /// need a sample per frame just to hold the line flat.
+    pub fn last(&self) -> Option<(f64, f32)> {
+        self.samples.last().copied()
     }
 
     pub fn is_empty(&self) -> bool {
@@ -75,19 +75,37 @@ mod tests {
     }
 
     #[test]
-    fn hold_extends_the_last_value() {
+    fn last_returns_the_newest_sample() {
         let mut trace = Trace::new(10.0);
-        trace.push(1.0, 99.0);
-        trace.hold(2.0);
-        assert_eq!(trace.samples(), &[(1.0, 99.0), (2.0, 99.0)]);
+        assert_eq!(trace.last(), None);
+        trace.push(1.0, 10.0);
+        trace.push(2.0, 20.0);
+        assert_eq!(trace.last(), Some((2.0, 20.0)));
     }
 
     #[test]
-    fn hold_on_empty_trace_does_nothing() {
+    fn a_long_lived_scope_keeps_a_bounded_buffer() {
+        // 60 s of frames at 60 fps used to append 3600 samples via hold().
         let mut trace = Trace::new(10.0);
-        trace.hold(5.0);
-        assert!(trace.is_empty());
+        trace.push(0.0, 0.0);
+        for frame in 1..=3600 {
+            let _ = trace.last();
+            let _ = frame;
+        }
+        assert_eq!(trace.samples().len(), 1, "idle frames must not grow the trace");
     }
+
+    #[test]
+    fn reading_does_not_grow_the_trace() {
+        let mut trace = Trace::new(10.0);
+        trace.push(1.0, 5.0);
+        for _ in 0..100 {
+            let _ = trace.last();
+        }
+        assert_eq!(trace.samples().len(), 1, "reads must not append samples");
+    }
+
+
 
     #[test]
     fn empty_after_everything_expires() {
