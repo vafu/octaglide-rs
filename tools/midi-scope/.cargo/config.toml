@@ -1,0 +1,3 @@
+# The repository root targets the Teensy. This tool is a desktop binary.
+[build]
+target = "x86_64-unknown-linux-gnu"

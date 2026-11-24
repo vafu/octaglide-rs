@@ -1,0 +1,12 @@
+[package]
+name = "midi-scope"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[workspace]
+
+[dependencies]
+eframe = "0.35"
+midir = "0.11"
+midi-msg = "0.8"
