@@ -73,11 +73,22 @@ async fn application() {
     tokio::task::spawn_local(button_task);
     tokio::task::spawn_local(midi_task);
 
+    log::info!("host simulator ready: 128x64 OLED, keys A/S/D/F, Q/E, space, Z-M/comma, 1-5, U");
+
     let mut ui_reader = ui_reader;
+    let mut last_snapshot = None;
+    let mut presented = false;
     loop {
         tokio::select! {
-            snapshot = ui_reader.wait() => display.render(&snapshot),
+            snapshot = ui_reader.wait() => last_snapshot = Some(snapshot),
             _ = tokio::time::sleep(std::time::Duration::from_millis(16)) => {}
+        }
+        if let Some(snapshot) = &last_snapshot {
+            display.render(snapshot);
+            if !presented {
+                presented = true;
+                log::info!("first frame presented");
+            }
         }
         for event in display.events() {
             match event {
