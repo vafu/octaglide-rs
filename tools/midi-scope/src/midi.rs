@@ -15,29 +15,61 @@ pub struct ControlChange {
 
 /// Decodes one raw MIDI message, returning any control changes it carries.
 pub fn decode_control_changes(bytes: &[u8]) -> Vec<ControlChange> {
+    decode_messages(bytes)
+        .into_iter()
+        .filter_map(|msg| match msg {
+            MidiMsg::ChannelVoice { channel, msg } => match msg {
+                ChannelVoiceMsg::ControlChange {
+                    control: midi_msg::ControlChange::CC { control, value },
+                } => Some(ControlChange {
+                    channel: channel as u8,
+                    control,
+                    value,
+                }),
+                _ => None,
+            },
+            _ => None,
+        })
+        .collect()
+}
+
+/// Decodes every complete MIDI message in `bytes`, dropping unparseable tails.
+pub fn decode_messages(bytes: &[u8]) -> Vec<MidiMsg> {
     let mut context = midi_msg::ReceiverContext::new();
     let mut out = Vec::new();
     let mut rest = bytes;
     while !rest.is_empty() {
         match MidiMsg::from_midi_with_context(rest, &mut context) {
             Ok((msg, len)) => {
-                if let MidiMsg::ChannelVoice { channel, msg } = msg
-                    && let ChannelVoiceMsg::ControlChange {
-                        control: midi_msg::ControlChange::CC { control, value },
-                    } = msg
-                {
-                    out.push(ControlChange {
-                        channel: channel as u8,
-                        control,
-                        value,
-                    });
-                }
+                out.push(msg);
                 rest = &rest[len..];
             }
             Err(_) => break,
         }
     }
     out
+}
+
+/// One terminal line per message, e.g. `ch 1 CC 3 = 42`.
+pub fn describe(msg: &MidiMsg) -> String {
+    match msg {
+        MidiMsg::ChannelVoice { channel, msg } => {
+            let channel = *channel as u8 + 1;
+            match msg {
+                ChannelVoiceMsg::NoteOn { note, velocity } => {
+                    format!("ch {channel} note on  {note} vel {velocity}")
+                }
+                ChannelVoiceMsg::NoteOff { note, velocity } => {
+                    format!("ch {channel} note off {note} vel {velocity}")
+                }
+                ChannelVoiceMsg::ControlChange {
+                    control: midi_msg::ControlChange::CC { control, value },
+                } => format!("ch {channel} CC {control} = {value}"),
+                other => format!("ch {channel} {other:?}"),
+            }
+        }
+        other => format!("{other:?}"),
+    }
 }
 
 /// Opens a connection to the first input port whose name matches `port`.
@@ -125,6 +157,18 @@ mod tests {
         assert_eq!(changes[0].channel, 3);
         assert_eq!(changes[0].control, 4);
         assert_eq!(changes[0].value, 127);
+    }
+
+    #[test]
+    fn describes_control_change_for_the_terminal() {
+        let messages = decode_messages(&[0xB0, 0x03, 0x2A]);
+        assert_eq!(describe(&messages[0]), "ch 1 CC 3 = 42");
+    }
+
+    #[test]
+    fn describes_notes_for_the_terminal() {
+        let messages = decode_messages(&[0x91, 0x3C, 0x64]);
+        assert_eq!(describe(&messages[0]), "ch 2 note on  60 vel 100");
     }
 
     #[test]

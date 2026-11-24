@@ -35,6 +35,8 @@ pub struct Options {
     pub mode: Mode,
     pub port: String,
     pub color: Rgb,
+    /// Echo every incoming message to stdout.
+    pub verbose: bool,
 }
 
 pub const DEFAULT_PORT: &str = "octaglide";
@@ -63,6 +65,7 @@ where
     let mut notes = false;
     let mut color = DEFAULT_COLOR;
     let mut port = DEFAULT_PORT.to_owned();
+    let mut verbose = true;
 
     let mut args = args.into_iter();
     while let Some(flag) = args.next() {
@@ -81,6 +84,7 @@ where
             }
             "--color" => color = parse_color(&value("--color")?)?,
             "--port" => port = value("--port")?,
+            "--quiet" => verbose = false,
             "--notes" => notes = true,
             "--help" | "-h" => return Err(UsageError(HELP.into())),
             other => {
@@ -101,7 +105,12 @@ where
         Mode::Cc { cc, channel }
     };
 
-    Ok(Options { mode, port, color })
+    Ok(Options {
+        mode,
+        port,
+        color,
+        verbose,
+    })
 }
 
 pub const HELP: &str = "\
@@ -116,6 +125,7 @@ OPTIONS:
     --channel <1-16>   MIDI channel to listen on (default 1)
     --color <RRGGBB>   Line colour, hex, no leading '#' (default ffffff)
     --port <NAME>      MIDI input port to attach to (default octaglide)
+    --quiet            Do not echo incoming messages to the terminal
     --notes            Plot note activity instead of a CC (not implemented)
     -h, --help         Show this help
 ";
@@ -171,6 +181,13 @@ mod tests {
             }
         );
         assert_eq!(options.port, DEFAULT_PORT);
+        assert!(options.verbose, "logging is on unless --quiet is given");
+    }
+
+    #[test]
+    fn quiet_disables_terminal_logging() {
+        let options = parse(args(&["--cc", "3", "--quiet"])).unwrap();
+        assert!(!options.verbose);
     }
 
     #[test]

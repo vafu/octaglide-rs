@@ -28,6 +28,7 @@ fn main() -> std::process::ExitCode {
         }
     };
 
+    let verbose = options.verbose;
     let tracker = Arc::new(Mutex::new(CcTracker::new(cc, channel, 10.0)));
     let sink = Arc::clone(&tracker);
     let start = std::time::Instant::now();
@@ -38,6 +39,12 @@ fn main() -> std::process::ExitCode {
             Ok(tracker) => tracker,
             Err(_) => return,
         };
+        let messages = midi::decode_messages(bytes);
+        if verbose {
+            for message in &messages {
+                println!("{}", midi::describe(message));
+            }
+        }
         for change in midi::decode_control_changes(bytes) {
             tracker.apply(change, now);
         }

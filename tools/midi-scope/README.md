@@ -17,6 +17,10 @@ Options:
 | `--color <RRGGBB>` | Line colour, `#` optional (default `ffffff`) |
 | `--port <NAME>` | Port substring to attach to (default `octaglide`) |
 | `--notes` | Note view (not implemented yet) |
+| `--quiet` | Do not echo incoming messages to the terminal |
+
+Every message received is echoed to stdout as it arrives, e.g.
+`ch 1 CC 3 = 42` or `ch 1 note on  60 vel 100`. Use `--quiet` to silence it.
 
 Run one instance per CC to watch several at once.
 
