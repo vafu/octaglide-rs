@@ -86,3 +86,33 @@ fn drag_keeps_the_strip_where_it_started() {
     input.pointer_up();
     assert!(input.pointer_move(Point::new(10, 0)).is_none());
 }
+
+#[test]
+fn holding_a_note_does_not_repeat_note_on() {
+    use embedded_graphics::geometry::Point;
+
+    let mut input = HostInput::new();
+    let first = input.handle(HostKey::Note(60), true, 0);
+    assert!(matches!(
+        first,
+        Some(HostEvent::App(crate::app_event::AppEvent::Midi(_)))
+    ));
+    // A repeated press for an already-held key must be swallowed.
+    assert!(input.handle(HostKey::Note(60), true, 10).is_none());
+    // Release still produces note-off.
+    assert!(matches!(
+        input.handle(HostKey::Note(60), false, 20),
+        Some(HostEvent::App(crate::app_event::AppEvent::Midi(_)))
+    ));
+    // After release, the same key can start a new note.
+    assert!(input.handle(HostKey::Note(60), true, 30).is_some());
+}
+
+#[test]
+fn repeated_button_press_is_swallowed() {
+    let mut input = HostInput::new();
+    assert!(input.handle(HostKey::Button(0), true, 0).is_some());
+    assert!(input.handle(HostKey::Button(0), true, 5).is_none());
+    assert!(input.handle(HostKey::Button(0), false, 10).is_some());
+    assert!(input.handle(HostKey::Button(0), true, 20).is_some());
+}

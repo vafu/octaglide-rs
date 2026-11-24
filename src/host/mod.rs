@@ -96,7 +96,11 @@ async fn application() {
         for event in display.events() {
             match event {
                 SimulatorEvent::Quit => std::process::exit(0),
-                SimulatorEvent::KeyDown { keycode, .. } => {
+                SimulatorEvent::KeyDown {
+                    keycode,
+                    repeat: false,
+                    ..
+                } => {
                     if let Some(key) = map_key(keycode) {
                         dispatch(
                             input.handle(key, true, start.elapsed().as_millis() as u32),

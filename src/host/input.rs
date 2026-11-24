@@ -35,6 +35,8 @@ pub struct HostInput {
     velocity: u8,
     usb_connected: bool,
     dragging: Option<u8>,
+    held_buttons: u8,
+    held_notes: [u64; 2],
 }
 
 /// Display width split into one vertical strip per physical slider.
@@ -47,21 +49,51 @@ impl HostInput {
             velocity: 100,
             usb_connected: false,
             dragging: None,
+            held_buttons: 0,
+            held_notes: [0; 2],
         }
     }
 
     pub fn handle(&mut self, key: HostKey, pressed: bool, now_ms: u32) -> Option<HostEvent> {
         match key {
-            HostKey::Button(index) => Some(HostEvent::Button(ButtonEdge {
-                index,
-                pressed,
-                at_ms: now_ms,
-            })),
-            HostKey::EncoderClick => Some(HostEvent::Button(ButtonEdge {
-                index: crate::ui::ENCODER_BUTTON_INDEX,
-                pressed,
-                at_ms: now_ms,
-            })),
+            HostKey::Button(index) => {
+                let mask = 1u8.checked_shl(index as u32).filter(|_| index < 8)?;
+                if pressed {
+                    if self.held_buttons & mask != 0 {
+                        return None;
+                    }
+                    self.held_buttons |= mask;
+                } else {
+                    if self.held_buttons & mask == 0 {
+                        return None;
+                    }
+                    self.held_buttons &= !mask;
+                }
+                Some(HostEvent::Button(ButtonEdge {
+                    index,
+                    pressed,
+                    at_ms: now_ms,
+                }))
+            }
+            HostKey::EncoderClick => {
+                let mask = 1u8 << crate::ui::ENCODER_BUTTON_INDEX;
+                if pressed {
+                    if self.held_buttons & mask != 0 {
+                        return None;
+                    }
+                    self.held_buttons |= mask;
+                } else {
+                    if self.held_buttons & mask == 0 {
+                        return None;
+                    }
+                    self.held_buttons &= !mask;
+                }
+                Some(HostEvent::Button(ButtonEdge {
+                    index: crate::ui::ENCODER_BUTTON_INDEX,
+                    pressed,
+                    at_ms: now_ms,
+                }))
+            }
             HostKey::EncoderCw if pressed => Some(HostEvent::Encoder(UiEvent::Encoder {
                 increment: true,
             })),
@@ -71,6 +103,19 @@ impl HostInput {
             HostKey::SliderUp(index) if pressed => self.slider(index, true),
             HostKey::SliderDown(index) if pressed => self.slider(index, false),
             HostKey::Note(note) => {
+                let (word, bit) = note_bit(note)?;
+                let mask = 1u64 << bit;
+                if pressed {
+                    if self.held_notes[word] & mask != 0 {
+                        return None;
+                    }
+                    self.held_notes[word] |= mask;
+                } else {
+                    if self.held_notes[word] & mask == 0 {
+                        return None;
+                    }
+                    self.held_notes[word] &= !mask;
+                }
                 let msg = if pressed {
                     MidiMsg::ChannelVoice {
                         channel: Channel::Ch1,
@@ -152,4 +197,12 @@ fn slider_index(point: Point) -> u8 {
 fn slider_value(y: i32) -> u16 {
     let y = y.clamp(0, 63);
     ((63 - y) as u32 * u16::MAX as u32 / 63) as u16
+}
+
+/// Bit position for a MIDI note in the held-note set.
+fn note_bit(note: u8) -> Option<(usize, u32)> {
+    if note > 127 {
+        return None;
+    }
+    Some(((note / 64) as usize, (note % 64) as u32))
 }
