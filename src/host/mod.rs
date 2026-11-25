@@ -78,19 +78,29 @@ async fn application() {
 
     log::info!("host simulator ready: 128x64 OLED, keys A/S/D/F, Q/E, space, Z-M/comma, 1-5, U");
 
+    // Push-based redraw: the UI signal fires only when `Controller::publish`
+    // sees a changed snapshot, so a redraw costs one blit per actual change
+    // rather than one per timer tick. The timer exists solely to pump SDL
+    // events when no UI update arrives.
+    // The window is not mapped when the first frame is pushed, and the
+    // compositor clears it on map. Keep the newest snapshot and re-present it
+    // once the surface exists; after that, redraw only on real changes.
     let mut ui_reader = ui_reader;
     let mut last_snapshot = None;
-    let mut presented = false;
+    let mut remap_deadline = Some(std::time::Instant::now() + std::time::Duration::from_millis(250));
     loop {
         tokio::select! {
-            snapshot = ui_reader.wait() => last_snapshot = Some(snapshot),
-            _ = tokio::time::sleep(std::time::Duration::from_millis(16)) => {}
-        }
-        if let Some(snapshot) = &last_snapshot {
-            display.render(snapshot);
-            if !presented {
-                presented = true;
-                log::info!("first frame presented");
+            snapshot = ui_reader.wait() => {
+                display.render(&snapshot);
+                last_snapshot = Some(snapshot);
+            }
+            _ = tokio::time::sleep(std::time::Duration::from_millis(16)) => {
+                if remap_deadline.is_some_and(|deadline| std::time::Instant::now() >= deadline) {
+                    remap_deadline = None;
+                    if let Some(snapshot) = &last_snapshot {
+                        display.render(snapshot);
+                    }
+                }
             }
         }
         for event in display.events() {
