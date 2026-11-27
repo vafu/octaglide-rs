@@ -11,7 +11,6 @@ impl Voice {
     pub(super) fn process_note(&mut self, transition: NoteTransition) -> OutputEvents {
         let mut out = OutputEvents::new();
         let mut current = transition;
-        let mut replaced = false;
 
         for section in self.slots.iter_mut() {
             for consumer in section.iter_mut() {
@@ -25,7 +24,6 @@ impl Voice {
                     // Voicing output becomes the note the next section sees.
                     if let Some(next) = retarget(&produced, current) {
                         current = next;
-                        replaced = true;
                     }
                 }
                 for msg in produced {
@@ -34,7 +32,6 @@ impl Voice {
             }
         }
 
-        let _ = replaced;
         out
     }
 
