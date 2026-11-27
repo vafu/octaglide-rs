@@ -67,18 +67,6 @@ impl Voice {
         out
     }
 
-    pub(super) fn reset_modulators(&mut self) -> OutputEvents {
-        let mut out = OutputEvents::new();
-        for section in self.slots.iter_mut() {
-            for consumer in section.iter_mut() {
-                for msg in consumer.reset() {
-                    out.push(msg).ok();
-                }
-            }
-        }
-        out
-    }
-
     pub(super) fn snapshot(&self, slot: super::Slot) -> Option<super::ConsumerSnapshot> {
         let consumer = self
             .slots

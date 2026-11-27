@@ -66,7 +66,7 @@ fn publish_writes_only_when_the_display_changes() {
 fn encoder_hold_and_button_release_selects_first_envelope() {
     block_on(async {
         let mut ui = controller();
-        let first = ui.handle(
+        let _first = ui.handle(
             UiEvent::EncoderClick { pressed: true },
             None,
         );
@@ -245,4 +245,38 @@ fn envelope_mode_indices_round_trip() {
     for mode in [EnvelopeMode::Ad, EnvelopeMode::Ar, EnvelopeMode::Adsr] {
         assert_eq!(EnvelopeMode::from_index(mode.index()), mode);
     }
+}
+
+#[test]
+fn idle_encoder_click_cycles_sections() {
+    let mut ui = controller();
+    assert_eq!(ui.selected().slot.section, Section::Modulation);
+    ui.handle(UiEvent::EncoderClick { pressed: true }, None);
+    ui.handle(UiEvent::EncoderClick { pressed: false }, None);
+    assert_eq!(ui.selected().slot.section, Section::Reserved);
+    ui.handle(UiEvent::EncoderClick { pressed: true }, None);
+    ui.handle(UiEvent::EncoderClick { pressed: false }, None);
+    assert_eq!(ui.selected().slot.section, Section::Sequencing);
+}
+
+#[test]
+fn chorded_encoder_click_does_not_cycle_sections() {
+    let mut ui = controller();
+    let before = ui.selected().slot.section;
+    ui.handle(UiEvent::EncoderClick { pressed: true }, None);
+    ui.handle(UiEvent::Button { index: 0, pressed: true }, None);
+    ui.handle(UiEvent::Button { index: 0, pressed: false }, None);
+    ui.handle(UiEvent::EncoderClick { pressed: false }, None);
+    assert_eq!(ui.selected().slot.section, before, "a chord must not cycle");
+}
+
+#[test]
+fn slot_button_selects_within_current_section() {
+    let mut ui = controller();
+    ui.handle(UiEvent::EncoderClick { pressed: true }, None);
+    ui.handle(UiEvent::EncoderClick { pressed: false }, None);
+    let section = ui.selected().slot.section;
+    ui.handle(UiEvent::Button { index: 2, pressed: true }, None);
+    ui.handle(UiEvent::Button { index: 2, pressed: false }, None);
+    assert_eq!(ui.selected().slot, Slot { section, index: 2 });
 }

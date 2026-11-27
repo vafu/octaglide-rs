@@ -97,17 +97,6 @@ impl Slot {
         Self { section, index }
     }
 
-    /// Flat index into a voice's `Section::COUNT * SLOTS_PER_SECTION` slots.
-    pub const fn flat(self) -> usize {
-        self.section.index() as usize * SLOTS_PER_SECTION + self.index as usize
-    }
-
-    pub const fn from_flat(flat: usize) -> Self {
-        Self {
-            section: Section::from_index((flat / SLOTS_PER_SECTION) as u8),
-            index: (flat % SLOTS_PER_SECTION) as u8,
-        }
-    }
 }
 
 /// Owns voices and their consumers.

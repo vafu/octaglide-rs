@@ -268,3 +268,26 @@ fn shared_calc_matches_playback_curve_samples() {
         curve += 31;
     }
 }
+
+#[test]
+fn releasing_the_last_note_zeroes_the_pitch_bend() {
+    let mut glider = super::consumers::Glider::new(VoiceId(0));
+    let mut out = super::OutputEvents::new();
+
+    // Press 60, then 67 while held: the second press starts a slide.
+    glider.consume(&press(VoiceId(0), 60), &mut out);
+    let mut glide_press = press(VoiceId(0), 67);
+    if let Input::Note(transition) = &mut glide_press {
+        transition.previous_top = Some(60);
+    }
+    glider.consume(&glide_press, &mut out);
+    glider.advance(50, true);
+
+    // Releasing 67 with nothing else held must return the bend to center.
+    let mut out = super::OutputEvents::new();
+    glider.consume(&release(VoiceId(0), 67, None), &mut out);
+    assert!(
+        out.iter().any(|msg| matches!(msg, VoiceOutput::PitchBend { amount, .. } if *amount == 0.0)),
+        "expected a zero pitch bend, got {out:?}"
+    );
+}

@@ -5,7 +5,7 @@ use crate::output::{OutputMessage, OutputSender};
 use super::consumers::{Glider, ModTrigger, Noop, Octave, SlotConsumer};
 use super::{
     Core, HeldNotes, Input, NoteKind, NoteTransition, OutputEvents, Section, Selection, Slot,
-    Voice, VoiceId, MAX_VOICES, SLOTS_PER_SECTION,
+    Voice, VoiceId, MAX_VOICES,
 };
 
 impl Core {
@@ -70,43 +70,8 @@ impl Core {
         self.emit(out).await;
     }
 
-    /// Stops every running modulator and emits its release.
-    pub async fn reset_modulators(&mut self) {
-        let mut out = OutputEvents::new();
-        for voice in self.voices.iter_mut() {
-            for msg in voice.reset_modulators() {
-                out.push(msg).ok();
-            }
-        }
-        self.emit(out).await;
-    }
-
     pub fn snapshot(&self, voice: VoiceId, slot: Slot) -> Option<super::ConsumerSnapshot> {
         self.voice(voice).and_then(|voice| voice.snapshot(slot))
-    }
-
-    pub fn section_snapshot(
-        &self,
-        voice: VoiceId,
-        section: Section,
-    ) -> [Option<super::ConsumerSnapshot>; SLOTS_PER_SECTION] {
-        core::array::from_fn(|index| self.snapshot(voice, Slot::new(section, index as u8)))
-    }
-
-    /// First slot in a section holding a given consumer kind.
-    pub fn find(&self, voice: VoiceId, kind: super::ConsumerKind) -> Option<Slot> {
-        let voice = self.voice(voice)?;
-        for (section_index, section) in voice.slots.iter().enumerate() {
-            for (index, consumer) in section.iter().enumerate() {
-                if consumer.kind() == kind {
-                    return Some(Slot::new(
-                        Section::from_index(section_index as u8),
-                        index as u8,
-                    ));
-                }
-            }
-        }
-        None
     }
 
     fn voice(&self, id: VoiceId) -> Option<&Voice> {

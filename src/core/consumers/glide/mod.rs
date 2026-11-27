@@ -76,10 +76,15 @@ impl Glider {
         }
     }
 
-    fn handle_note_off(&mut self, transition: &NoteTransition) {
+    /// Returns the messages needed to release the current slide.
+    ///
+    /// A slide that ends without a new target must zero the pitch bend,
+    /// otherwise the wire stays bent after the last note is released.
+    fn handle_note_off(&mut self, transition: &NoteTransition) -> OutputEvents {
+        let mut out = OutputEvents::new();
         if !self.settings.enabled {
             self.active_note = transition.new_top;
-            return;
+            return out;
         }
         if transition.was_top
             && let Some(last_held) = transition.new_top
@@ -90,15 +95,18 @@ impl Glider {
                 transition.note,
                 last_held,
             ));
-        } else {
-            self.engine = None;
+        } else if let Some(mut engine) = self.engine.take() {
+            for msg in engine.reset() {
+                out.push(msg).ok();
+            }
         }
         self.active_note = transition.new_top;
+        out
     }
 }
 
 impl Consumer for Glider {
-    fn consume(&mut self, input: &Input, _out: &mut OutputEvents) -> Routing {
+    fn consume(&mut self, input: &Input, out: &mut OutputEvents) -> Routing {
         match *input {
             Input::Note(transition @ NoteTransition { kind: NoteKind::Press, velocity, .. })
                 if velocity > 0 =>
@@ -107,7 +115,9 @@ impl Consumer for Glider {
                 Routing::Forward
             }
             Input::Note(transition @ NoteTransition { kind: NoteKind::Release, .. }) => {
-                self.handle_note_off(&transition);
+                for msg in self.handle_note_off(&transition) {
+                    out.push(msg).ok();
+                }
                 Routing::Forward
             }
             Input::ControlUpdate { control, value, .. } => {
