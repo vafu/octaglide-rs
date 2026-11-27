@@ -276,7 +276,16 @@ mod app {
         }
     }
 
-    #[task(local = [core], priority = 1)]
+    /// Owns the voice graph and the UI selection state.
+    ///
+    /// Priority 2 puts Core above the USB host maintenance task (1) and level
+    /// with the UI tasks, while staying below `midi_dispatch` and
+    /// `animate_voices` (3) so they still preempt and drain the output queue.
+    ///
+    /// The prio-2 deadlock recorded in the hang notes was `midi_dispatch` and
+    /// `usb_host_isr` sharing this level; `usb_host_isr` is now priority 4, so
+    /// Core at 2 cannot reproduce it.
+    #[task(local = [core], priority = 2)]
     async fn core_task(
         cx: core_task::Context,
         receiver: CoreReceiver,
