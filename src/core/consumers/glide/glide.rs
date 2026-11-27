@@ -1,14 +1,10 @@
-use heapless::Vec;
-
-use crate::{
-    core::{Messages, Modulation, VoiceId, VoiceOutput},
-    notes,
-};
+use crate::core::{Modulation, OutputEvents, VoiceId, VoiceOutput};
 
 use super::settings::GlideState;
 
 const FALLBACK_BEND_RANGE_SEMITONES: f32 = 1.0;
 
+/// A running slide from `from` to `to`.
 #[derive(Debug)]
 pub struct Glide {
     voice: VoiceId,
@@ -16,6 +12,8 @@ pub struct Glide {
     from: u8,
     to: u8,
     active_note: u8,
+    elapsed_ms: u32,
+    finished: bool,
 }
 
 impl Glide {
@@ -26,36 +24,31 @@ impl Glide {
             from,
             to,
             active_note: from,
+            elapsed_ms: 0,
+            finished: false,
         }
+    }
+
+    pub fn update(&mut self, settings: GlideState) {
+        self.settings = settings;
+    }
+
+    pub fn is_finished(&self) -> bool {
+        self.finished
     }
 
     fn bend_amount(&self, semitones: f32, bend_range_semitones: f32) -> f32 {
         (semitones / bend_range_semitones).clamp(-1.0, 1.0)
     }
-}
 
-impl Modulation for Glide {
-    fn update(&mut self, settings: &crate::core::Settings) {
-        if let crate::core::Settings::Glide(settings) = settings {
-            self.settings = *settings;
-        }
-    }
-
-    async fn duration_ms(&self) -> u32 {
-        self.settings.duration_ms
-    }
-
-    async fn next_stage(&mut self) -> bool {
-        false
-    }
-
-    async fn animate(&mut self, progress: f32, _depth: f32, _offset: f32) -> Messages {
+    /// Emits the note and bend messages for a given normalized position.
+    fn emit(&mut self, progress: f32) -> OutputEvents {
         let glide = self.settings;
         let bend_range = bend_range_semitones(glide.bend_range_semitones);
-        let mut messages = Vec::new();
+        let mut messages = OutputEvents::new();
 
         if self.from == self.to {
-            return Some(messages);
+            return messages;
         }
 
         let slide_range = self.to as f32 - self.from as f32;
@@ -85,11 +78,7 @@ impl Modulation for Glide {
                 })
                 .ok();
 
-            let active_note_held =
-                notes::read_notes(self.voice, |notes| notes.is_held(self.active_note))
-                    .await
-                    .unwrap_or(false);
-            if self.active_note != 0 && !active_note_held {
+            if self.active_note != 0 {
                 messages
                     .push(VoiceOutput::NoteOff {
                         voice: self.voice,
@@ -109,35 +98,36 @@ impl Modulation for Glide {
             })
             .ok();
 
+        messages
+    }
+}
+
+impl Modulation for Glide {
+    fn advance(&mut self, delta_ms: u32, _gated: bool) -> Option<OutputEvents> {
+        if self.finished {
+            return None;
+        }
+        self.elapsed_ms = self.elapsed_ms.saturating_add(delta_ms);
+        let duration = self.settings.duration_ms.max(1);
+        let progress = (self.elapsed_ms as f32 / duration as f32).clamp(0.0, 1.0);
+        let messages = self.emit(progress);
+        if progress >= 1.0 {
+            self.finished = true;
+        }
         Some(messages)
     }
 
-    async fn reset(&mut self) -> Messages {
-        let mut messages = Vec::new();
-
-        let active_note_held =
-            notes::read_notes(self.voice, |notes| notes.is_held(self.active_note))
-                .await
-                .unwrap_or(false);
-        if self.active_note != 0 && !active_note_held {
-            messages
-                .push(VoiceOutput::NoteOff {
-                    voice: self.voice,
-                    note: self.active_note,
-                    velocity: 0,
-                })
-                .ok();
-        }
-
-        self.active_note = self.from;
+    fn reset(&mut self) -> OutputEvents {
+        let mut messages = OutputEvents::new();
         messages
             .push(VoiceOutput::PitchBend {
                 voice: self.voice,
                 amount: 0.0,
             })
             .ok();
-
-        Some(messages)
+        self.active_note = self.from;
+        self.finished = true;
+        messages
     }
 }
 

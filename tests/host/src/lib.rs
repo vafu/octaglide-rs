@@ -21,8 +21,6 @@ mod midi {
     pub use crate::midi_dedupe::MidiOutputCache;
     pub use crate::midi_fmt::*;
 }
-#[path = "../../../src/notes/mod.rs"]
-mod notes;
 #[path = "../../../src/output/mod.rs"]
 mod output;
 #[path = "../../../src/runtime/mod.rs"]

@@ -1,5 +1,7 @@
 //! Envelope settings owned by the envelope consumer.
 
+use crate::core::Activation;
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct EnvelopeStageState {
     pub duration: u8,
@@ -32,10 +34,6 @@ impl EnvelopeMode {
         }
     }
 
-    pub fn step(self, direction: i8) -> Self {
-        let next = (self.index() as i32 + direction as i32).rem_euclid(Self::COUNT as i32) as u8;
-        Self::from_index(next)
-    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -45,6 +43,7 @@ pub struct EnvelopeState {
     pub release: EnvelopeStageState,
     pub sustain: u8,
     pub mode: EnvelopeMode,
+    pub activation: Activation,
 }
 
 impl EnvelopeState {
@@ -63,5 +62,6 @@ impl EnvelopeState {
         },
         sustain: 80,
         mode: EnvelopeMode::Ad,
+        activation: Activation::NoteOnce,
     };
 }

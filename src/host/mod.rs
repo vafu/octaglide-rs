@@ -17,7 +17,7 @@ use tokio::task::LocalSet;
 use crate::{
     app_event::{AppEvent, AppSender},
     core::Core,
-    runtime::{RuntimeStorage, run_animations, run_buttons, run_core, run_midi_dispatch},
+    runtime::{RuntimeStorage, run_buttons, run_core, run_midi_dispatch},
     ui::{ButtonSender, UiEvent},
 };
 
@@ -48,7 +48,7 @@ pub fn run() -> ! {
 async fn application() {
     let handles = STORAGE.init(RuntimeStorage::new()).split();
     let core: &'static mut Core =
-        Box::leak(Box::new(Core::new(handles.output_sender.clone(), handles.animators)));
+        Box::leak(Box::new(Core::new(handles.output_sender.clone())));
     let midi: &'static mut HostMidiBus = Box::leak(Box::new(HostMidiBus::new("octaglide", "octaglide-in", handles.app_sender.clone())));
     let mut display = HostDisplay::new();
     let mut input = HostInput::new();
@@ -59,20 +59,17 @@ async fn application() {
     let ui_reader = handles.ui_reader;
     let receiver = handles.app_receiver;
 
-    let core_task = run_core(
+    let core_task = run_core::<TokioClock>(
         core,
         receiver,
         handles.output_sender.clone(),
         handles.ui_writer.clone(),
     );
-    let animation_task =
-        run_animations::<TokioClock>(handles.engines, handles.output_sender.clone());
     let button_task = run_buttons::<TokioClock>(handles.button_receiver, handles.app_sender);
     let midi_task =
         run_midi_dispatch(midi, handles.output_receiver, crate::midi::MidiController::new());
 
     tokio::task::spawn_local(core_task);
-    tokio::task::spawn_local(animation_task);
     tokio::task::spawn_local(button_task);
     tokio::task::spawn_local(midi_task);
 

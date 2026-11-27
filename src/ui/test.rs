@@ -1,4 +1,5 @@
-use crate::core::{EnvelopeMode, VoiceId};
+use crate::core::consumers::envelope::EnvelopeMode;
+use crate::core::{Section, Slot, VoiceId};
 use crate::ui::{Controller, UiEvent};
 use futures::executor::block_on;
 use rtic_sync::signal::Signal;
@@ -26,7 +27,7 @@ fn controller() -> Controller {
         writer,
         crate::core::Selection {
             voice: VoiceId(0),
-            lane: 2,
+            slot: Slot { section: Section::Modulation, index: 2 },
         },
     )
 }
@@ -40,7 +41,7 @@ fn controller_with_reader() -> (
         writer,
         crate::core::Selection {
             voice: VoiceId(0),
-            lane: 2,
+            slot: Slot { section: Section::Modulation, index: 2 },
         },
     );
     (ui, reader)
@@ -68,24 +69,24 @@ fn encoder_hold_and_button_release_selects_first_envelope() {
         let first = ui.handle(
             UiEvent::EncoderClick { pressed: true },
             None,
-            Some(2),
-            Some(4),
         );
         assert_eq!(ui.selected().voice, VoiceId(0));
         let pressed = ui.handle(
             UiEvent::Button { index: 1, pressed: true },
             None,
-            Some(2),
-            Some(4),
         );
         assert_eq!(ui.selected().voice, VoiceId(0));
         let released = ui.handle(
             UiEvent::Button { index: 1, pressed: false },
             None,
-            Some(2),
-            Some(4),
         );
-        assert_eq!(ui.selected(), crate::core::Selection { voice: VoiceId(1), lane: 2 });
+        assert_eq!(
+            ui.selected(),
+            crate::core::Selection {
+                voice: VoiceId(1),
+                slot: Slot { section: Section::Modulation, index: 0 },
+            }
+        );
     });
 }
 
@@ -95,16 +96,12 @@ fn lane_button_without_modifier_selects_lane() {
     let _ = ui.handle(
         UiEvent::Button { index: 3, pressed: true },
         None,
-        Some(2),
-        Some(4),
     );
     let released = ui.handle(
         UiEvent::Button { index: 3, pressed: false },
         None,
-        Some(2),
-        Some(4),
     );
-    assert_eq!(ui.selected(), crate::core::Selection { voice: VoiceId(0), lane: 3 });
+    assert_eq!(ui.selected(), crate::core::Selection { voice: VoiceId(0), slot: Slot::new(Section::Modulation, 3) });
 }
 
 #[test]
@@ -113,11 +110,9 @@ fn slider_after_voice_selection_targets_the_new_voice() {
     let _ = ui.handle(
         UiEvent::EncoderClick { pressed: true },
         None,
-        Some(2),
-        Some(4),
     );
-    let _ = ui.handle(UiEvent::Button { index: 1, pressed: true }, None, Some(2), Some(4));
-    let _ = ui.handle(UiEvent::Button { index: 1, pressed: false }, None, Some(2), Some(4));
+    let _ = ui.handle(UiEvent::Button { index: 1, pressed: true }, None);
+    let _ = ui.handle(UiEvent::Button { index: 1, pressed: false }, None);
     assert_eq!(ui.selected().voice, VoiceId(1));
 
     let updates = ui.handle(
@@ -126,14 +121,12 @@ fn slider_after_voice_selection_targets_the_new_voice() {
             value: u16::MAX,
         },
         None,
-        Some(2),
-        Some(4),
     );
     assert!(matches!(
         updates.first(),
         Some(crate::core::Input::ControlUpdate {
             voice: VoiceId(1),
-            lane: 2,
+            slot: Slot { section: Section::Modulation, index: 0 },
             ..
         })
     ));
@@ -147,14 +140,12 @@ fn encoder_wraps_the_mode_index_in_the_ui() {
     let updates = ui.handle(
         UiEvent::Encoder { increment: true },
         Some(at_last),
-        Some(2),
-        Some(4),
     );
     assert!(matches!(
         updates.first(),
         Some(crate::core::Input::ModeSet {
             voice: VoiceId(0),
-            lane: 2,
+            slot: Slot { section: Section::Modulation, index: 2 },
             index: 0
         })
     ));
@@ -164,8 +155,6 @@ fn encoder_wraps_the_mode_index_in_the_ui() {
     let updates = ui.handle(
         UiEvent::Encoder { increment: false },
         Some(at_first),
-        Some(2),
-        Some(4),
     );
     assert!(matches!(
         updates.first(),
@@ -180,8 +169,6 @@ fn encoder_does_nothing_for_consumers_without_modes() {
     let updates = ui.handle(
         UiEvent::Encoder { increment: true },
         Some(no_modes),
-        Some(2),
-        Some(4),
     );
     assert!(updates.is_empty());
 }
@@ -192,7 +179,7 @@ fn slider_pickup_uses_previous_physical_position() {
     let target = snapshot([Some(0.5), None, None, None, None, None, None, None]);
 
     // Start far from the target so the first move is filtered out.
-    let blocked = ui.handle(UiEvent::Slider { index: 0, value: 0 }, Some(target), Some(2), Some(4));
+    let blocked = ui.handle(UiEvent::Slider { index: 0, value: 0 }, Some(target));
     assert!(blocked.is_empty());
 
     // Cross the target between samples; the edit should be accepted.
@@ -202,14 +189,12 @@ fn slider_pickup_uses_previous_physical_position() {
             value: u16::MAX,
         },
         Some(target),
-        Some(2),
-        Some(4),
     );
     assert!(matches!(
         accepted.first(),
         Some(crate::core::Input::ControlUpdate {
             voice: VoiceId(0),
-            lane: 2,
+            slot: Slot { section: Section::Modulation, index: 2 },
             control: 0,
             ..
         })
@@ -222,24 +207,22 @@ fn alternate_slider_bank_maps_decay_and_attack_curves() {
     let _ = ui.handle(
         UiEvent::EncoderClick { pressed: true },
         None,
-        Some(2),
-        Some(4),
     );
     let target = snapshot([None, None, None, None, None, Some(0.5), Some(0.5), None]);
 
-    let decay = ui.handle(UiEvent::Slider { index: 2, value: 0 }, Some(target), Some(2), Some(4));
+    let decay = ui.handle(UiEvent::Slider { index: 2, value: 0 }, Some(target));
     assert!(matches!(
         decay.first(),
         Some(crate::core::Input::ControlUpdate { control: 5, .. })
     ));
 
-    let attack = ui.handle(UiEvent::Slider { index: 3, value: 0 }, Some(target), Some(2), Some(4));
+    let attack = ui.handle(UiEvent::Slider { index: 3, value: 0 }, Some(target));
     assert!(matches!(
         attack.first(),
         Some(crate::core::Input::ControlUpdate { control: 6, .. })
     ));
 
-    let sustain = ui.handle(UiEvent::Slider { index: 1, value: 0 }, Some(target), Some(2), Some(4));
+    let sustain = ui.handle(UiEvent::Slider { index: 1, value: 0 }, Some(target));
     assert!(matches!(
         sustain.first(),
         Some(crate::core::Input::ControlUpdate { control: 1, .. })
@@ -252,17 +235,14 @@ fn usb_status_publishes_without_changing_selection() {
     let updates = ui.handle(
         UiEvent::UsbConnection { connected: true },
         None,
-        Some(2),
-        Some(4),
     );
     assert!(updates.is_empty());
-    assert_eq!(ui.selected(), crate::core::Selection { voice: VoiceId(0), lane: 2 });
+    assert_eq!(ui.selected(), crate::core::Selection { voice: VoiceId(0), slot: Slot::new(Section::Modulation, 2) });
 }
 
 #[test]
-fn envelope_mode_cycles() {
-    assert_eq!(EnvelopeMode::Ad.step(1), EnvelopeMode::Ar);
-    assert_eq!(EnvelopeMode::Ar.step(1), EnvelopeMode::Adsr);
-    assert_eq!(EnvelopeMode::Adsr.step(1), EnvelopeMode::Ad);
-    assert_eq!(EnvelopeMode::Ad.step(-1), EnvelopeMode::Adsr);
+fn envelope_mode_indices_round_trip() {
+    for mode in [EnvelopeMode::Ad, EnvelopeMode::Ar, EnvelopeMode::Adsr] {
+        assert_eq!(EnvelopeMode::from_index(mode.index()), mode);
+    }
 }

@@ -14,12 +14,12 @@ fn midi_note_reaches_core_output() {
     block_on(async {
         let storage: &'static mut RuntimeStorage = Box::leak(Box::new(RuntimeStorage::new()));
         let mut handles = storage.split();
-        let mut core = Core::new(handles.output_sender.clone(), handles.animators);
+        let mut core = Core::new(handles.output_sender.clone());
         let mut ui = Controller::new(
             handles.ui_writer.clone(),
             Selection {
                 voice: VoiceId(0),
-                lane: 2,
+                slot: crate::core::Slot::new(crate::core::Section::Modulation, 2),
             },
         );
         let note = MidiMsg::ChannelVoice {

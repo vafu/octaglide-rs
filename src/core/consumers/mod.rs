@@ -1,79 +1,89 @@
-//! Consumers of semantic input, split by where they sit in a voice.
+//! Consumers: the addressable occupants of a voice's four sections.
+//!
+//! A consumer reacts to `Input`, exposes controls and modes to the UI, and may
+//! also implement [`Modulation`] when it produces timed output.
 
 use enum_dispatch::enum_dispatch;
 
 use crate::core::{Input, OutputEvents};
 
-mod dispatch;
 pub mod envelope;
 pub(crate) mod glide;
+mod noop;
 mod octave;
 mod octave_settings;
-mod passthrough;
+pub(crate) mod registry;
 
 pub use self::envelope::ModTrigger;
 pub use self::glide::Glider;
+pub use self::noop::Noop;
 pub use self::octave::Octave;
-pub use self::octave_settings::OctaveState;
-pub use self::passthrough::Passthrough;
 
 pub const CONTROL_SLOTS: usize = 8;
+pub const SLOTS_PER_SECTION: usize = 4;
 
-/// Behaviour shared by every consumer, regardless of position.
+/// What a consumer decided to do with the input it received.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Routing {
+    /// The event continues to the rest of the chain.
+    Forward,
+    /// The consumer handled the event; the chain stops here.
+    Consumed,
+}
+
+/// Behaviour shared by every addressable consumer.
 #[enum_dispatch]
 pub trait Consumer {
-    async fn consume(&mut self, input: &Input, out: &mut OutputEvents) -> bool;
+    /// Handles one semantic input addressed to this consumer.
+    fn consume(&mut self, input: &Input, out: &mut OutputEvents) -> Routing;
+
+    /// Whether this consumer wants broadcast note events.
+    ///
+    /// Addressed events (`ControlUpdate`, `ModeSet`) always reach their slot;
+    /// this only gates the note fan-out.
+    fn wants_notes(&self) -> bool {
+        false
+    }
+
     fn set_control_slot(&mut self, _slot: u8, _value: f32) {}
+
     fn control_slot_value(&self, _slot: u8) -> Option<f32> {
         None
     }
-}
 
-/// A selectable modulation lane, addressed by the UI.
-///
-/// Only lanes carry modes and an output slot: they are the things a user can
-/// select and edit. Voicing consumers have no addressable lane.
-#[enum_dispatch]
-pub trait ModLane: Consumer {
-    /// Number of selectable modes; zero means the lane has none.
+    /// Number of selectable modes; zero means mode selection is moot.
     fn mode_count(&self) -> u8 {
         0
     }
+
     /// Currently selected mode, as an index into `mode_count`.
     fn mode_index(&self) -> u8 {
         0
     }
+
     /// Selects a mode by index. Out-of-range indices are ignored.
     fn set_mode(&mut self, _index: u8) {}
+
     fn output_slot(&self) -> u8 {
         0
     }
 }
 
-/// The voicing chain: ordered note transforms, applied before modulation lanes.
-#[enum_dispatch(Consumer)]
+/// The 16 consumers of one voice: four sections of four slots.
+#[enum_dispatch(Consumer, Modulation)]
 #[derive(Debug)]
-pub enum Voicing {
+pub enum SlotConsumer {
+    Noop(Noop),
     Octave(Octave),
     Glider(Glider),
-}
-
-/// The four addressable modulation lanes.
-#[enum_dispatch(ModLane, Consumer)]
-#[derive(Debug)]
-pub enum ModLanes {
-    Passthrough(Passthrough),
     ModTrigger(ModTrigger),
 }
 
-/// Stable identity for the addressable consumers in a snapshot.
-///
-/// Only modulation lanes are addressable today, so voicing consumers have no
-/// variants here. Giving them their own address space is a separate design
-/// question; adding them to this enum would imply `Core::snapshot` can reach
-/// them, which it cannot.
+/// Stable identity of a consumer implementation, used in snapshots.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ConsumerKind {
-    Passthrough,
+    Noop,
+    Octave,
+    Glider,
     ModTrigger,
 }

@@ -1,18 +1,77 @@
-use super::{Consumer, Input, ModLanes, OutputEvents, Voice, VoiceOutput, Voicing};
+use super::{
+    Consumer, Input, Modulation, NoteKind, NoteTransition, OutputEvents, Routing,
+    SlotConsumer, Voice, VoiceOutput,
+};
 
 impl Voice {
-    /// Runs the full chain: voicing transforms, then modulation lanes.
-    pub(super) async fn process_input(&mut self, input: Input) -> OutputEvents {
-        let voiced = run_voicing(&mut self.voicing, input).await;
+    /// Fans one note out to every consumer that wants notes.
+    ///
+    /// Voicing output replaces the note for the rest of the chain, so a later
+    /// section sees the transposed note rather than the original.
+    pub(super) fn process_note(&mut self, transition: NoteTransition) -> OutputEvents {
         let mut out = OutputEvents::new();
-        for msg in voiced {
-            match to_input(msg) {
-                Some(input) => {
-                    for lane_msg in run_lanes(&mut self.modulations, input).await {
-                        out.push(lane_msg).ok();
+        let mut current = transition;
+        let mut replaced = false;
+
+        for section in self.slots.iter_mut() {
+            for consumer in section.iter_mut() {
+                if !consumer.wants_notes() {
+                    continue;
+                }
+                let mut produced = OutputEvents::new();
+                let routing = consumer.consume(&Input::Note(current), &mut produced);
+
+                if routing == Routing::Consumed && !produced.is_empty() {
+                    // Voicing output becomes the note the next section sees.
+                    if let Some(next) = retarget(&produced, current) {
+                        current = next;
+                        replaced = true;
                     }
                 }
-                None => {
+                for msg in produced {
+                    out.push(msg).ok();
+                }
+            }
+        }
+
+        let _ = replaced;
+        out
+    }
+
+    /// Runs one addressed event through exactly one slot.
+    pub(super) fn process_addressed(&mut self, slot: super::Slot, input: Input) -> OutputEvents {
+        let Some(consumer) = self
+            .slots
+            .get_mut(slot.section.index() as usize)
+            .and_then(|section| section.get_mut(slot.index as usize))
+        else {
+            return OutputEvents::new();
+        };
+        let mut out = OutputEvents::new();
+        consumer.consume(&input, &mut out);
+        out
+    }
+
+    pub(super) fn advance(&mut self, delta_ms: u32) -> OutputEvents {
+        let gated = self.notes.any_held();
+        let mut out = OutputEvents::new();
+        for section in self.slots.iter_mut() {
+            for consumer in section.iter_mut() {
+                if let Some(messages) = consumer.advance(delta_ms, gated) {
+                    for msg in messages {
+                        out.push(msg).ok();
+                    }
+                }
+            }
+        }
+        out
+    }
+
+    pub(super) fn reset_modulators(&mut self) -> OutputEvents {
+        let mut out = OutputEvents::new();
+        for section in self.slots.iter_mut() {
+            for consumer in section.iter_mut() {
+                for msg in consumer.reset() {
                     out.push(msg).ok();
                 }
             }
@@ -20,94 +79,48 @@ impl Voice {
         out
     }
 
-    /// Runs the modulation lanes from `lane` onward.
-    pub(super) async fn process_lane(&mut self, lane: usize, input: Input) -> OutputEvents {
-        let Some(chain) = self.modulations.get_mut(lane..) else {
-            return OutputEvents::new();
-        };
-        run_lanes(chain, input).await
+    pub(super) fn snapshot(&self, slot: super::Slot) -> Option<super::ConsumerSnapshot> {
+        let consumer = self
+            .slots
+            .get(slot.section.index() as usize)
+            .and_then(|section| section.get(slot.index as usize))?;
+        Some(consumer.snapshot())
     }
 }
 
-async fn run_voicing(chain: &mut [Voicing], input: Input) -> OutputEvents {
-    let mut current = OutputEvents::new();
-    let Some((first, rest)) = chain.split_first_mut() else {
-        if let Some(output) = input_to_output(input) {
-            current.push(output).ok();
+fn retarget(produced: &OutputEvents, current: NoteTransition) -> Option<NoteTransition> {
+    produced.iter().find_map(|msg| match *msg {
+        VoiceOutput::NoteOn { note, velocity, .. } if current.kind == NoteKind::Press => {
+            Some(NoteTransition { note, velocity, ..current })
         }
-        return current;
-    };
-    dispatch_consumer(first, input, &mut current).await;
-    for consumer in rest {
-        if current.is_empty() {
-            break;
+        VoiceOutput::NoteOff { note, velocity, .. } if current.kind == NoteKind::Release => {
+            Some(NoteTransition { note, velocity, ..current })
         }
-        let mut next = OutputEvents::new();
-        for msg in core::mem::take(&mut current) {
-            match to_input(msg) {
-                Some(input) => dispatch_consumer(consumer, input, &mut next).await,
-                None => {
-                    next.push(msg).ok();
-                }
-            }
-        }
-        current = next;
-    }
-    current
-}
-
-async fn run_lanes(chain: &mut [ModLanes], input: Input) -> OutputEvents {
-    let mut current = OutputEvents::new();
-    let Some((first, rest)) = chain.split_first_mut() else {
-        if let Some(output) = input_to_output(input) {
-            current.push(output).ok();
-        }
-        return current;
-    };
-    dispatch_consumer(first, input, &mut current).await;
-    for consumer in rest {
-        if current.is_empty() {
-            break;
-        }
-        let mut next = OutputEvents::new();
-        for msg in core::mem::take(&mut current) {
-            match to_input(msg) {
-                Some(input) => dispatch_consumer(consumer, input, &mut next).await,
-                None => {
-                    next.push(msg).ok();
-                }
-            }
-        }
-        current = next;
-    }
-    current
-}
-
-async fn dispatch_consumer<C: Consumer>(
-    consumer: &mut C,
-    input: Input,
-    out: &mut OutputEvents,
-) {
-    let consumed = consumer.consume(&input, out).await;
-    if !consumed && let Some(output) = input_to_output(input) {
-        if out.push(output).is_err() {
-            log::error!("Voice output capacity exceeded");
-        }
-    }
-}
-
-fn input_to_output(input: Input) -> Option<VoiceOutput> {
-    match input {
-        Input::NoteOn { voice, note, velocity } => Some(VoiceOutput::NoteOn { voice, note, velocity }),
-        Input::NoteOff { voice, note, velocity } => Some(VoiceOutput::NoteOff { voice, note, velocity }),
         _ => None,
-    }
+    })
 }
 
-fn to_input(output: VoiceOutput) -> Option<Input> {
-    match output {
-        VoiceOutput::NoteOn { voice, note, velocity } => Some(Input::NoteOn { voice, note, velocity }),
-        VoiceOutput::NoteOff { voice, note, velocity } => Some(Input::NoteOff { voice, note, velocity }),
-        _ => None,
+impl SlotConsumer {
+    pub(super) fn snapshot(&self) -> super::ConsumerSnapshot {
+        let mut controls = [None; super::CONTROL_SLOTS];
+        for (slot, value) in controls.iter_mut().enumerate() {
+            *value = self.control_slot_value(slot as u8);
+        }
+        super::ConsumerSnapshot {
+            kind: self.kind(),
+            output_slot: self.output_slot(),
+            controls,
+            mode: self.mode_index(),
+            mode_count: self.mode_count(),
+        }
+    }
+
+    pub(super) fn kind(&self) -> super::ConsumerKind {
+        match self {
+            Self::Noop(_) => super::ConsumerKind::Noop,
+            Self::Octave(_) => super::ConsumerKind::Octave,
+            Self::Glider(_) => super::ConsumerKind::Glider,
+            Self::ModTrigger(_) => super::ConsumerKind::ModTrigger,
+        }
     }
 }

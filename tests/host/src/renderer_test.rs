@@ -55,6 +55,7 @@ fn passthrough_snapshot() -> DisplaySnapshot {
     DisplaySnapshot {
         track: 0,
         voice: 0,
+        section: crate::core::Section::Modulation,
         lane: 2,
         usb_connected: true,
         model: None,
@@ -65,6 +66,7 @@ fn envelope_snapshot() -> DisplaySnapshot {
     DisplaySnapshot {
         track: 0,
         voice: 0,
+        section: crate::core::Section::Modulation,
         lane: 2,
         usb_connected: false,
         model: Some(UiModel::ModTrigger(ModTriggerUi {

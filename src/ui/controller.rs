@@ -1,7 +1,7 @@
 use heapless::Vec;
 
 use crate::{
-    core::{ConsumerSnapshot, Input, Selection, VoiceId, MAX_VOICES},
+    core::{ConsumerSnapshot, Input, Section, Selection, Slot, VoiceId, MAX_VOICES},
     ui::{DisplaySnapshot, UiWriter},
 };
 
@@ -28,6 +28,8 @@ pub struct Controller {
     tracks: [Track; MAX_VOICES],
     selected: Selection,
     encoder_held: bool,
+    /// True when the current encoder hold was used for something else.
+    encoder_used: bool,
     captured_buttons: u8,
     armed_buttons: u8,
     lane_buttons: u8,
@@ -54,6 +56,7 @@ impl Controller {
             tracks,
             selected,
             encoder_held: false,
+            encoder_used: false,
             captured_buttons: 0,
             armed_buttons: 0,
             lane_buttons: 0,
@@ -81,7 +84,8 @@ impl Controller {
         let display = DisplaySnapshot {
             track,
             voice: self.selected.voice.0,
-            lane: self.selected.lane as u8,
+            section: self.selected.slot.section,
+            lane: self.selected.slot.index,
             usb_connected: self.usb_connected,
             model: snapshot.as_ref().and_then(model),
         };
@@ -95,8 +99,6 @@ impl Controller {
         &mut self,
         event: UiEvent,
         snapshot: Option<ConsumerSnapshot>,
-        first_envelope_lane: Option<usize>,
-        lane_count: Option<usize>,
     ) -> Vec<Input, MAX_VOICES> {
         let mut updates = Vec::new();
         match event {
@@ -117,7 +119,7 @@ impl Controller {
                 updates
                     .push(Input::ControlUpdate {
                         voice: self.selected.voice,
-                        lane: self.selected.lane,
+                        slot: self.selected.slot,
                         control: slot,
                         value: value as f32 / u16::MAX as f32,
                     })
@@ -137,18 +139,23 @@ impl Controller {
                     updates
                         .push(Input::ModeSet {
                             voice: self.selected.voice,
-                            lane: self.selected.lane,
+                            slot: self.selected.slot,
                             index: next,
                         })
                         .ok();
                 }
             }
             UiEvent::EncoderClick { pressed } => {
-                self.encoder_held = pressed;
                 if pressed {
+                    self.encoder_held = true;
+                    self.encoder_used = false;
                     self.lane_buttons = 0;
                 } else {
+                    self.encoder_held = false;
                     self.armed_buttons = 0;
+                    if !self.encoder_used {
+                        self.cycle_section();
+                    }
                 }
             }
             UiEvent::Button { index, pressed } if index < 4 => {
@@ -157,6 +164,7 @@ impl Controller {
                     if self.encoder_held {
                         self.captured_buttons |= mask;
                         self.armed_buttons |= mask;
+                        self.encoder_used = true;
                     } else {
                         self.lane_buttons |= mask;
                     }
@@ -170,18 +178,17 @@ impl Controller {
                     if armed && self.encoder_held {
                         if let Some(track) = self.tracks.get(index as usize) {
                             if let Some(&voice) = track.voices[..track.count as usize].first() {
-                                if let Some(lane) = first_envelope_lane {
-                                    self.select(Selection { voice, lane });
-                                }
+                                self.select(Selection {
+                                    voice,
+                                    slot: Slot::new(Section::Modulation, 0),
+                                });
                             }
                         }
                     } else if lane && !captured && !self.encoder_held {
-                        if lane_count.is_some_and(|count| (index as usize) < count) {
-                            self.select(Selection {
-                                voice: self.selected.voice,
-                                lane: index as usize,
-                            });
-                        }
+                        self.select(Selection {
+                            voice: self.selected.voice,
+                            slot: Slot::new(self.selected.slot.section, index),
+                        });
                     }
                 }
             }
@@ -191,6 +198,14 @@ impl Controller {
             _ => {}
         }
         updates
+    }
+
+    fn cycle_section(&mut self) {
+        let section = self.selected.slot.section.next();
+        self.select(Selection {
+            voice: self.selected.voice,
+            slot: Slot::new(section, self.selected.slot.index),
+        });
     }
 
     /// Adopt a gesture's selection. Invalid selections are ignored.

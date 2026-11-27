@@ -19,12 +19,12 @@ fn midi_note_does_not_publish_a_snapshot() {
     block_on(async {
         let storage: &'static mut RuntimeStorage = Box::leak(Box::new(RuntimeStorage::new()));
         let mut handles = storage.split();
-        let mut core = Core::new(handles.output_sender.clone(), handles.animators);
+        let mut core = Core::new(handles.output_sender.clone());
         let mut ui = Controller::new(
             handles.ui_writer.clone(),
-            Selection { voice: VoiceId(0), lane: 2 },
+            Selection { voice: VoiceId(0), slot: crate::core::Slot::new(crate::core::Section::Modulation, 2) },
         );
-        ui.publish(core.snapshot(ui.selected().voice, ui.selected().lane));
+        ui.publish(core.snapshot(ui.selected().voice, ui.selected().slot));
         assert!(handles.ui_reader.try_read().is_some());
 
         let note = midi_msg::MidiMsg::ChannelVoice {

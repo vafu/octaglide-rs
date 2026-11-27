@@ -29,6 +29,8 @@ pub type ButtonReceiver = rtic_sync::channel::Receiver<'static, ButtonEdge, BUTT
 pub type UiWriter = rtic_sync::signal::SignalWriter<'static, DisplaySnapshot>;
 pub type UiReader = rtic_sync::signal::SignalReader<'static, DisplaySnapshot>;
 
+use crate::core::Section;
+
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct ModTriggerUi {
     pub name: &'static str,
@@ -41,12 +43,24 @@ pub struct ModTriggerUi {
 }
 
 /// The consumer model the display renders.
-///
-/// One variant while only modulation lanes are addressable. Voicing consumers
-/// will arrive as their own model once `Core` can address them.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum UiModel {
+    Octave(OctaveUi),
+    Glider(GliderUi),
     ModTrigger(ModTriggerUi),
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct OctaveUi {
+    pub shift: i8,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct GliderUi {
+    pub enabled: bool,
+    pub duration_ms: u32,
+    pub bend_range_semitones: f32,
+    pub note_on_velocity: u8,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -59,6 +73,7 @@ pub struct EnvelopeStageUi {
 pub struct DisplaySnapshot {
     pub track: u8,
     pub voice: u8,
+    pub section: Section,
     pub lane: u8,
     pub usb_connected: bool,
     pub model: Option<UiModel>,

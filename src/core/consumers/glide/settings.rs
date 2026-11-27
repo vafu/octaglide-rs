@@ -1,11 +1,14 @@
 //! Glide settings owned by the glide consumer.
 
+use crate::core::Activation;
+
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct GlideState {
     pub enabled: bool,
     pub duration_ms: u32,
     pub bend_range_semitones: f32,
     pub note_on_velocity: u8,
+    pub activation: Activation,
 }
 
 impl GlideState {
@@ -14,6 +17,7 @@ impl GlideState {
         duration_ms: 200,
         bend_range_semitones: 2.0,
         note_on_velocity: 100,
+        activation: Activation::NoteOnce,
     };
 }
 
@@ -40,14 +44,4 @@ impl GlideMode {
         }
     }
 
-    pub fn step(self, direction: i8) -> Self {
-        if direction == 0 {
-            self
-        } else {
-            match self {
-                Self::Disabled => Self::Enabled,
-                Self::Enabled => Self::Disabled,
-            }
-        }
-    }
 }

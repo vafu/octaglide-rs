@@ -1,7 +1,7 @@
 use crate::core::{
-    Animator, Cmd, Input, Modulator, OutputEvents, Settings, VoiceId,
+    Input, Modulation, NoteKind, NoteTransition, OutputEvents, Routing, VoiceId,
 };
-use crate::core::modulator::GlideControl;
+use crate::core::consumers::registry::GlideControl;
 
 use super::Consumer;
 mod glide;
@@ -9,19 +9,23 @@ pub mod settings;
 pub(crate) use self::glide::Glide;
 pub use self::settings::{GlideMode, GlideState};
 
+/// A voicing consumer that slides between notes with pitch bend.
 #[derive(Debug)]
 pub struct Glider {
     voice_id: VoiceId,
-    animator: Animator,
     settings: GlideState,
+    engine: Option<Glide>,
+    /// The note the voice is currently sounding, if any.
+    active_note: Option<u8>,
 }
 
 impl Glider {
-    pub fn new(voice_id: VoiceId, animator: Animator) -> Self {
+    pub fn new(voice_id: VoiceId) -> Self {
         Self {
             voice_id,
-            animator,
             settings: GlideState::INITIAL,
+            engine: None,
+            active_note: None,
         }
     }
 
@@ -39,13 +43,8 @@ impl Glider {
                     libm::roundf(1.0 + value.clamp(0.0, 1.0) * 126.0) as u8
             }
         }
-    }
-
-    fn mode(&self) -> GlideMode {
-        if self.settings.enabled {
-            GlideMode::Enabled
-        } else {
-            GlideMode::Disabled
+        if let Some(engine) = self.engine.as_mut() {
+            engine.update(self.settings);
         }
     }
 
@@ -62,92 +61,77 @@ impl Glider {
         }
     }
 
-    async fn handle_note_on(&mut self, note: u8) -> bool {
-        let Some(transition) = notes::edit_notes(self.voice_id, |notes| notes.press(note)).await
-        else {
-            return false;
-        };
+    fn handle_note_on(&mut self, transition: &NoteTransition) {
+        self.active_note = Some(transition.note);
         if !self.settings.enabled {
-            return false;
+            return;
         }
         if let Some(from) = transition.previous_top {
-            let _: Result<(), _> = self.animator
-                .send(Cmd::Start(Modulator::Glide(Glide::new(
-                    self.voice_id,
-                    self.settings,
-                    from,
-                    note,
-                ))))
-                .await;
-            true
-        } else {
-            false
+            self.engine = Some(Glide::new(
+                self.voice_id,
+                self.settings,
+                from,
+                transition.note,
+            ));
         }
     }
 
-    async fn handle_note_off(&mut self, note: u8) -> bool {
-        let Some(release) = notes::edit_notes(self.voice_id, |notes| notes.release(note)).await
-        else {
-            return false;
-        };
+    fn handle_note_off(&mut self, transition: &NoteTransition) {
         if !self.settings.enabled {
-            return false;
+            self.active_note = transition.new_top;
+            return;
         }
-        if let Some(release) = release
-            && release.was_top
-            && let Some(last_held) = release.new_top
+        if transition.was_top
+            && let Some(last_held) = transition.new_top
         {
-            let _: Result<(), _> = self.animator
-                .send(Cmd::Start(Modulator::Glide(Glide::new(
-                    self.voice_id,
-                    self.settings,
-                    note,
-                    last_held,
-                ))))
-                .await;
-            true
+            self.engine = Some(Glide::new(
+                self.voice_id,
+                self.settings,
+                transition.note,
+                last_held,
+            ));
         } else {
-            let _: Result<(), _> = self.animator.send(Cmd::Stop).await;
-            false
+            self.engine = None;
         }
+        self.active_note = transition.new_top;
     }
 }
 
 impl Consumer for Glider {
-    async fn consume(&mut self, input: &Input, _out: &mut OutputEvents) -> bool {
-        let before = self.settings;
-        let consumed = match *input {
-            Input::NoteOn { voice, note, velocity } if voice == self.voice_id && velocity > 0 => {
-                self.handle_note_on(note).await
+    fn consume(&mut self, input: &Input, _out: &mut OutputEvents) -> Routing {
+        match *input {
+            Input::Note(transition @ NoteTransition { kind: NoteKind::Press, velocity, .. })
+                if velocity > 0 =>
+            {
+                self.handle_note_on(&transition);
+                Routing::Forward
             }
-            Input::NoteOff { voice, note, .. } if voice == self.voice_id => {
-                self.handle_note_off(note).await
+            Input::Note(transition @ NoteTransition { kind: NoteKind::Release, .. }) => {
+                self.handle_note_off(&transition);
+                Routing::Forward
             }
-            Input::ControlUpdate { voice, control, value, .. } if voice == self.voice_id => {
-                if let Some(mapped) = Self::control_for_slot(control) {
-                    self.set(mapped, value);
-                    true
+            Input::ControlUpdate { control, value, .. } => {
+                if Self::control_for_slot(control).is_some() {
+                    self.set_control_slot(control, value);
+                    Routing::Consumed
                 } else {
-                    false
+                    Routing::Forward
                 }
             }
-            Input::ModeSet { voice, index, .. } if voice == self.voice_id => {
+            Input::ModeSet { index, .. } => {
                 if index < GlideMode::COUNT {
-                    self.settings.enabled =
-                        matches!(GlideMode::from_index(index), GlideMode::Enabled);
-                    true
+                    self.set_mode(index);
+                    Routing::Consumed
                 } else {
-                    false
+                    Routing::Forward
                 }
             }
-            _ => false,
-        };
-        if self.settings != before {
-            let _: Result<(), _> = self.animator
-                .send(Cmd::Update(Settings::Glide(self.settings)))
-                .await;
+            _ => Routing::Forward,
         }
-        consumed
+    }
+
+    fn wants_notes(&self) -> bool {
+        true
     }
 
     fn set_control_slot(&mut self, slot: u8, value: f32) {
@@ -159,6 +143,45 @@ impl Consumer for Glider {
     fn control_slot_value(&self, slot: u8) -> Option<f32> {
         Self::control_for_slot(slot).map(|control| self.get(control))
     }
+
+    fn mode_count(&self) -> u8 {
+        GlideMode::COUNT
+    }
+
+    fn mode_index(&self) -> u8 {
+        if self.settings.enabled {
+            GlideMode::Enabled
+        } else {
+            GlideMode::Disabled
+        }
+        .index()
+    }
+
+    fn set_mode(&mut self, index: u8) {
+        if index < GlideMode::COUNT {
+            self.settings.enabled = matches!(GlideMode::from_index(index), GlideMode::Enabled);
+            if !self.settings.enabled {
+                self.engine = None;
+            }
+        }
+    }
+
+    fn output_slot(&self) -> u8 {
+        0
+    }
 }
 
-use crate::notes;
+impl Modulation for Glider {
+    fn advance(&mut self, delta_ms: u32, gated: bool) -> Option<OutputEvents> {
+        let engine = self.engine.as_mut()?;
+        let output = engine.advance(delta_ms, gated)?;
+        if engine.is_finished() {
+            self.engine = None;
+        }
+        Some(output)
+    }
+
+    fn reset(&mut self) -> OutputEvents {
+        self.engine.as_mut().map(Modulation::reset).unwrap_or_default()
+    }
+}

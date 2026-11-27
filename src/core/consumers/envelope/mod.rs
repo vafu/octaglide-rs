@@ -1,45 +1,32 @@
 use crate::core::{
-    Animator, Cmd, Input, Modulator, OutputEvents, Settings, VoiceId,
+    Activation, Input, Modulation, NoteKind, NoteTransition, OutputEvents, Routing, VoiceId,
 };
-use crate::core::modulator::EnvelopeControl;
+use crate::core::consumers::registry::EnvelopeControl;
 
-use super::{Consumer, ModLane};
+use super::Consumer;
+pub(crate) use self::envelope::Envelope;
 pub mod calc;
 mod envelope;
 pub mod settings;
-pub(crate) use self::envelope::Envelope;
-pub use self::settings::{EnvelopeMode, EnvelopeStageState, EnvelopeState};
+pub use self::settings::{EnvelopeMode, EnvelopeState};
 
+/// A modulation lane that runs an envelope on note press.
 #[derive(Debug)]
 pub struct ModTrigger {
     voice_id: VoiceId,
     output_slot: u8,
     settings: EnvelopeState,
-    animator: Animator,
+    engine: Option<Envelope>,
 }
 
 impl ModTrigger {
-    pub const SLOTS: [u8; 7] = [0, 1, 2, 3, 4, 5, 6];
-
-    pub fn new(voice_id: VoiceId, output_slot: u8, animator: Animator) -> Self {
+    pub fn new(voice_id: VoiceId, output_slot: u8) -> Self {
         Self {
             voice_id,
             output_slot,
             settings: EnvelopeState::INITIAL,
-            animator,
+            engine: None,
         }
-    }
-
-    pub fn mode(&self) -> EnvelopeMode {
-        self.settings.mode
-    }
-
-    pub fn settings(&self) -> &EnvelopeState {
-        &self.settings
-    }
-
-    pub fn output_slot(&self) -> u8 {
-        self.output_slot
     }
 
     fn set(&mut self, control: EnvelopeControl, value: f32) {
@@ -52,7 +39,15 @@ impl ModTrigger {
             EnvelopeControl::AttackCurve => self.settings.attack.curve = value,
             EnvelopeControl::DecayCurve => self.settings.decay.curve = value,
             EnvelopeControl::ReleaseCurve => self.settings.release.curve = value,
+            EnvelopeControl::Activation => {
+                self.settings.activation = match value {
+                    0 => Activation::NoteOnce,
+                    1 => Activation::NoteLoop,
+                    _ => Activation::FreeLoop,
+                }
+            }
         }
+        self.push_settings();
     }
 
     fn get(&self, control: EnvelopeControl) -> f32 {
@@ -64,49 +59,55 @@ impl ModTrigger {
             EnvelopeControl::AttackCurve => self.settings.attack.curve,
             EnvelopeControl::DecayCurve => self.settings.decay.curve,
             EnvelopeControl::ReleaseCurve => self.settings.release.curve,
+            EnvelopeControl::Activation => match self.settings.activation {
+                Activation::NoteOnce => 0,
+                Activation::NoteLoop => 1,
+                Activation::FreeLoop => 2,
+            },
         };
         value as f32 / 127.0
+    }
+
+    fn push_settings(&mut self) {
+        if let Some(engine) = self.engine.as_mut() {
+            engine.update(self.settings);
+        }
     }
 }
 
 impl Consumer for ModTrigger {
-    async fn consume(&mut self, input: &Input, _out: &mut OutputEvents) -> bool {
-        let before = self.settings;
-        let consumed = match *input {
-            Input::NoteOn { voice, velocity, .. } if voice == self.voice_id && velocity > 0 => {
-                let _: Result<(), _> = self.animator
-                    .send(Cmd::Start(Modulator::Envelope(Envelope::new(
-                        self.voice_id,
-                        self.output_slot,
-                        self.settings,
-                    ))))
-                    .await;
-                false
+    fn consume(&mut self, input: &Input, _out: &mut OutputEvents) -> Routing {
+        match *input {
+            Input::Note(NoteTransition { kind: NoteKind::Press, velocity, .. })
+                if velocity > 0 =>
+            {
+                let mut engine = Envelope::new(self.voice_id, self.output_slot, self.settings);
+                engine.trigger();
+                self.engine = Some(engine);
+                Routing::Forward
             }
-            Input::ControlUpdate { voice, control, value, .. } if voice == self.voice_id => {
-                if let Some(mapped) = Self::control_for_slot(control) {
-                    self.set(mapped, value);
-                    true
+            Input::ControlUpdate { control, value, .. } => {
+                if Self::control_for_slot(control).is_some() {
+                    self.set_control_slot(control, value);
+                    Routing::Consumed
                 } else {
-                    false
+                    Routing::Forward
                 }
             }
-            Input::ModeSet { voice, index, .. } if voice == self.voice_id => {
+            Input::ModeSet { index, .. } => {
                 if index < EnvelopeMode::COUNT {
-                    self.settings.mode = EnvelopeMode::from_index(index);
-                    true
+                    self.set_mode(index);
+                    Routing::Consumed
                 } else {
-                    false
+                    Routing::Forward
                 }
             }
-            _ => false,
-        };
-        if self.settings != before {
-            let _: Result<(), _> = self.animator
-                .send(Cmd::Update(Settings::Envelope(self.settings)))
-                .await;
+            _ => Routing::Forward,
         }
-        consumed
+    }
+
+    fn wants_notes(&self) -> bool {
+        true
     }
 
     fn set_control_slot(&mut self, slot: u8, value: f32) {
@@ -118,9 +119,7 @@ impl Consumer for ModTrigger {
     fn control_slot_value(&self, slot: u8) -> Option<f32> {
         Self::control_for_slot(slot).map(|control| self.get(control))
     }
-}
 
-impl ModLane for ModTrigger {
     fn mode_count(&self) -> u8 {
         EnvelopeMode::COUNT
     }
@@ -132,6 +131,7 @@ impl ModLane for ModTrigger {
     fn set_mode(&mut self, index: u8) {
         if index < EnvelopeMode::COUNT {
             self.settings.mode = EnvelopeMode::from_index(index);
+            self.push_settings();
         }
     }
 
@@ -140,11 +140,16 @@ impl ModLane for ModTrigger {
     }
 }
 
-pub(crate) fn normalized_to_u8(value: f32) -> u8 {
-    libm::roundf(value.clamp(0.0, 1.0) * 127.0) as u8
+impl Modulation for ModTrigger {
+    fn advance(&mut self, delta_ms: u32, gated: bool) -> Option<OutputEvents> {
+        self.engine.as_mut()?.advance(delta_ms, gated)
+    }
+
+    fn reset(&mut self) -> OutputEvents {
+        self.engine.as_mut().map(Modulation::reset).unwrap_or_default()
+    }
 }
 
-pub(crate) fn normalized_to_u32(value: f32, min: u32, max: u32) -> u32 {
-    let span = max.saturating_sub(min);
-    min + libm::roundf(value.clamp(0.0, 1.0) * span as f32) as u32
+pub(crate) fn normalized_to_u8(value: f32) -> u8 {
+    libm::roundf(value.clamp(0.0, 1.0) * 127.0) as u8
 }

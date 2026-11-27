@@ -3,7 +3,7 @@ mod app {
 
     use crate::{
         app_event::{AppReceiver, AppSender},
-        core::{AnimationEngine, Core, ANIMATORS_PER_VOICE, MAX_VOICES},
+        core::Core,
         midi::{MidiBus, MidiController},
         output::{OutputReceiver, OutputSender},
         runtime::RuntimeStorage,
@@ -37,7 +37,6 @@ mod app {
     };
 
     pub type MidiUart = Lpuart<Pins<pins::P20, pins::P21>, 8>;
-    pub type Animator = crate::core::Animator;
     pub type CoreSender = AppSender;
     pub type CoreReceiver = AppReceiver;
     pub type MidiSender = OutputSender;
@@ -136,12 +135,10 @@ mod app {
         log::set_max_level(configured_log_level());
 
         let handles = STORAGE.init(RuntimeStorage::new()).split();
-        let mut output_sender = handles.output_sender;
+        let output_sender = handles.output_sender;
         let core_sender = handles.app_sender;
         let button_sender = handles.button_sender;
         let midi_controller = MidiController::new();
-
-        animate_voices::spawn(handles.engines, output_sender.clone()).unwrap();
 
         // The reset button connects P7 to ground, so use a pullup and falling-edge interrupt.
         iomuxc::configure(
@@ -219,7 +216,7 @@ mod app {
             Local {
                 tx_bus: Bus::Usb(usb_bus),
                 led: board::led(&mut gpio2, pins.p13),
-                core: Core::new(output_sender.clone(), handles.animators),
+                core: Core::new(output_sender.clone()),
                 reset_btn,
                 button1,
                 button2,
@@ -292,7 +289,7 @@ mod app {
         output: OutputSender,
         ui_writer: crate::ui::UiWriter,
     ) -> ! {
-        crate::runtime::run_core(cx.local.core, receiver, output, ui_writer).await
+        crate::runtime::run_core::<SystickClock>(cx.local.core, receiver, output, ui_writer).await
     }
 
     #[task(priority = 1)]
@@ -387,15 +384,6 @@ mod app {
     #[task(local = [adc1, adc2, slider0, slider1, slider2, slider3, prev: [u16; 4] = [u16::MAX; 4]], priority = 2)]
     async fn read_sliders(cx: read_sliders::Context, sender: CoreSender) -> ! {
         crate::teensy::hardware::read_sliders(cx, sender).await
-    }
-
-    #[task(priority = 3)]
-    async fn animate_voices(
-        _cx: animate_voices::Context,
-        engines: [[AnimationEngine; ANIMATORS_PER_VOICE]; MAX_VOICES],
-        sender: MidiSender,
-    ) {
-        crate::runtime::run_animations::<SystickClock>(engines, sender).await
     }
 
     #[task(priority = 2)]

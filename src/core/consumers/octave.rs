@@ -1,4 +1,6 @@
-use crate::core::{Input, OutputEvents, VoiceId, VoiceOutput};
+use crate::core::{
+    Input, Modulation, NoteKind, NoteTransition, OutputEvents, Routing, VoiceId, VoiceOutput,
+};
 
 use super::octave_settings::OctaveState;
 
@@ -40,41 +42,36 @@ impl Octave {
 }
 
 impl Consumer for Octave {
-    async fn consume(&mut self, input: &Input, out: &mut OutputEvents) -> bool {
-        let before = self.settings;
-        let consumed = match *input {
-            Input::NoteOn { voice, note, velocity } if voice == self.voice => {
-                out.push(VoiceOutput::NoteOn {
-                    voice,
-                    note: self.shifted_note(note),
-                    velocity,
-                })
-                .is_ok()
+    fn consume(&mut self, input: &Input, out: &mut OutputEvents) -> Routing {
+        match *input {
+            Input::Note(NoteTransition { kind, note, velocity, .. }) => {
+                let note = self.shifted_note(note);
+                let output = match kind {
+                    NoteKind::Press => VoiceOutput::NoteOn { voice: self.voice, note, velocity },
+                    NoteKind::Release => VoiceOutput::NoteOff { voice: self.voice, note, velocity },
+                };
+                out.push(output).ok();
+                Routing::Consumed
             }
-            Input::NoteOff { voice, note, velocity } if voice == self.voice => {
-                out.push(VoiceOutput::NoteOff {
-                    voice,
-                    note: self.shifted_note(note),
-                    velocity,
-                })
-                .is_ok()
-            }
-            Input::ControlUpdate { voice, control, value, .. } if voice == self.voice => {
+            Input::ControlUpdate { control, value, .. } => {
                 if Self::CONTROL_MAP
                     .get(control as usize)
                     .copied()
                     .flatten()
                     .is_some()
                 {
-                    self.settings.shift = libm::roundf((value.clamp(0.0, 1.0) * 84.0) - 48.0) as i8;
-                    true
+                    self.set_control_slot(control, value);
+                    Routing::Consumed
                 } else {
-                    false
+                    Routing::Forward
                 }
             }
-            _ => false,
-        };
-        self.settings != before || consumed
+            _ => Routing::Forward,
+        }
+    }
+
+    fn wants_notes(&self) -> bool {
+        true
     }
 
     fn set_control_slot(&mut self, slot: u8, value: f32) {
@@ -93,3 +90,5 @@ impl Consumer for Octave {
         .then_some((self.settings.shift as f32 + 48.0) / 84.0)
     }
 }
+
+impl Modulation for Octave {}

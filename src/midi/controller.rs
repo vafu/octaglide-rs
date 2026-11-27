@@ -2,7 +2,7 @@ use heapless::Vec;
 use midi_msg::{Channel, ChannelVoiceMsg, ControlChange, MidiMsg};
 
 use crate::{
-    core::{Input, VoiceId},
+    core::{Input, NoteKind, NoteTransition, VoiceId},
     output::{OutputMessage, OutputSender},
 };
 
@@ -41,18 +41,26 @@ impl MidiController {
         let mut out = Vec::new();
         for voice in voices {
             let input = match voice_msg {
-                ChannelVoiceMsg::NoteOn { note, velocity } => {
-                    if *velocity == 0 {
-                        Input::NoteOff { voice, note: *note, velocity: 0 }
-                    } else {
-                        Input::NoteOn { voice, note: *note, velocity: *velocity }
-                    }
-                }
-                ChannelVoiceMsg::NoteOff { note, velocity } => Input::NoteOff {
+                ChannelVoiceMsg::NoteOn { note, velocity } => Input::Note(NoteTransition {
                     voice,
+                    kind: if *velocity == 0 { NoteKind::Release } else { NoteKind::Press },
                     note: *note,
                     velocity: *velocity,
-                },
+                    previous_top: None,
+                    was_top: false,
+                    new_top: None,
+                    any_held: false,
+                }),
+                ChannelVoiceMsg::NoteOff { note, velocity } => Input::Note(NoteTransition {
+                    voice,
+                    kind: NoteKind::Release,
+                    note: *note,
+                    velocity: *velocity,
+                    previous_top: None,
+                    was_top: false,
+                    new_top: None,
+                    any_held: false,
+                }),
                 _ => return None,
             };
             out.push(input).ok();

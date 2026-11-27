@@ -21,23 +21,35 @@ where
     let usb_connected = snapshot.usb_connected;
 
     let Some(current) = snapshot.model else {
-        use core::fmt::Write;
         draw_usb_status(display, usb_connected)?;
-        let mut heading = heapless::String::<32>::new();
-        let _ = write!(
-            heading,
-            "T{} V{} L{}",
-            snapshot.track + 1,
-            snapshot.voice + 1,
-            snapshot.lane + 1
-        );
-        Text::with_alignment(&heading, Point::new(127, 7), text_style, Alignment::Right)
-            .draw(display)?;
-        Text::new("Passthrough", Point::new(0, 22), text_style).draw(display)?;
+        draw_heading(display, snapshot, text_style)?;
+        Text::new("Empty", Point::new(0, 22), text_style).draw(display)?;
         return Ok(());
     };
 
-    let UiModel::ModTrigger(current) = current;
+    if let UiModel::Octave(model) = current {
+        draw_usb_status(display, usb_connected)?;
+        draw_heading(display, snapshot, text_style)?;
+        use core::fmt::Write;
+        let mut label = heapless::String::<32>::new();
+        let _ = write!(label, "Octave: {} st", model.shift);
+        Text::new(&label, Point::new(0, 22), text_style).draw(display)?;
+        return Ok(());
+    }
+
+    if let UiModel::Glider(model) = current {
+        draw_usb_status(display, usb_connected)?;
+        draw_heading(display, snapshot, text_style)?;
+        use core::fmt::Write;
+        let mut label = heapless::String::<32>::new();
+        let _ = write!(label, "Glide: {} ms", model.duration_ms);
+        Text::new(&label, Point::new(0, 22), text_style).draw(display)?;
+        return Ok(());
+    }
+
+    let UiModel::ModTrigger(current) = current else {
+        return Ok(());
+    };
 
     draw_usb_status(display, usb_connected)?;
 
@@ -46,17 +58,7 @@ where
         1 => "AR",
         _ => "ADSR",
     };
-    use core::fmt::Write;
-    let mut heading = heapless::String::<32>::new();
-    let _ = write!(
-        heading,
-        "T{} V{} L{}",
-        snapshot.track + 1,
-        snapshot.voice + 1,
-        snapshot.lane + 1,
-    );
-    Text::with_alignment(&heading, Point::new(127, 7), text_style, Alignment::Right)
-        .draw(display)?;
+    draw_heading(display, snapshot, text_style)?;
     Text::with_text_style(
         mode_str,
         Point::new(64, 63),
@@ -83,5 +85,28 @@ where
         prev_y = y;
     }
 
+    Ok(())
+}
+
+fn draw_heading<D>(
+    display: &mut D,
+    snapshot: &DisplaySnapshot,
+    text_style: MonoTextStyle<'_, BinaryColor>,
+) -> Result<(), D::Error>
+where
+    D: DrawTarget<Color = BinaryColor>,
+{
+    use core::fmt::Write;
+    let mut heading = heapless::String::<32>::new();
+    let _ = write!(
+        heading,
+        "T{} V{} {}{}",
+        snapshot.track + 1,
+        snapshot.voice + 1,
+        snapshot.section.label(),
+        snapshot.lane + 1,
+    );
+    Text::with_alignment(&heading, Point::new(127, 7), text_style, Alignment::Right)
+        .draw(display)?;
     Ok(())
 }

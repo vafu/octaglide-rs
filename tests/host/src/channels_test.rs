@@ -1,13 +1,11 @@
-use crate::runtime::{ANIMATORS_PER_VOICE, MAX_VOICES, RuntimeStorage};
+use crate::runtime::{RuntimeStorage};
 
 #[test]
-fn split_produces_channels_and_engines_for_every_voice() {
+fn split_produces_every_channel_endpoint() {
     let storage: &'static mut RuntimeStorage = Box::leak(Box::new(RuntimeStorage::new()));
     let handles = storage.split();
-    assert_eq!(handles.animators.len(), MAX_VOICES);
-    assert_eq!(handles.animators[0].envelopes.len(), 2);
-    assert_eq!(handles.engines.len(), MAX_VOICES);
-    assert_eq!(handles.engines[0].len(), ANIMATORS_PER_VOICE);
+    assert!(!handles.output_sender.is_closed());
+    assert!(!handles.app_sender.is_closed());
 }
 
 #[test]
@@ -35,6 +33,7 @@ fn signal_round_trips_a_snapshot() {
     let snapshot = crate::ui::DisplaySnapshot {
         track: 2,
         voice: 0,
+        section: crate::core::Section::Modulation,
         lane: 2,
         usb_connected: false,
         model: None,

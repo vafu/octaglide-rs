@@ -12,7 +12,6 @@ compile_error!("teensy and host features are mutually exclusive");
 mod app_event;
 mod core;
 mod midi;
-mod notes;
 mod output;
 mod runtime;
 mod ui;
