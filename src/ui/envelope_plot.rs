@@ -1,4 +1,4 @@
-use crate::calc::{Preview, Stage};
+use crate::core::consumers::envelope::calc::{Preview, Stage};
 
 use super::{EnvelopeStageUi, ModTriggerUi};
 
@@ -7,7 +7,7 @@ use super::{EnvelopeStageUi, ModTriggerUi};
 /// Positive stages shorter than one pixel get one pixel so brief attacks remain visible.
 /// Hold modes use a fixed illustrative plateau; actual sustain follows note release.
 pub(crate) fn envelope_plot_level(model: &ModTriggerUi, x: u32) -> f32 {
-    crate::calc::preview_level(
+    crate::core::consumers::envelope::calc::preview_level(
         &Preview {
             mode: model.mode,
             attack: stage(&model.attack),

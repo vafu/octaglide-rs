@@ -21,6 +21,7 @@ impl Consumers {
             output_slot: self.output_slot(),
             controls,
             mode: self.mode_index(),
+            mode_count: self.mode_count(),
         }
     }
 }

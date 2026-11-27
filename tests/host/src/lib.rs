@@ -3,8 +3,6 @@
 
 #[path = "../../../src/app_event.rs"]
 mod app_event;
-#[path = "../../../src/calc/mod.rs"]
-mod calc;
 #[path = "../../../src/core/mod.rs"]
 mod core;
 #[path = "../../../src/midi/fmt.rs"]
@@ -35,7 +33,7 @@ mod host_input;
 
 
 #[cfg(test)]
-mod storage_test;
+mod channels_test;
 
 #[cfg(test)]
 mod core_task_test;

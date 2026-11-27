@@ -7,26 +7,27 @@ compile_error!("select exactly one platform feature: teensy or host");
 #[cfg(all(feature = "teensy", feature = "host"))]
 compile_error!("teensy and host features are mutually exclusive");
 
-#[cfg(feature = "teensy")]
+// Shared by both platforms; the platform modules below pick their own
+// board support and entry point.
+#[cfg(any(feature = "teensy", feature = "host"))]
 mod app_event;
-#[cfg(feature = "teensy")]
-mod calc;
-#[cfg(feature = "teensy")]
+#[cfg(any(feature = "teensy", feature = "host"))]
 mod core;
-#[cfg(feature = "teensy")]
+#[cfg(any(feature = "teensy", feature = "host"))]
 mod midi;
-#[cfg(feature = "teensy")]
+#[cfg(any(feature = "teensy", feature = "host"))]
 mod notes;
-#[cfg(feature = "teensy")]
+#[cfg(any(feature = "teensy", feature = "host"))]
 mod output;
-#[cfg(feature = "teensy")]
+#[cfg(any(feature = "teensy", feature = "host"))]
 mod runtime;
-#[cfg(feature = "teensy")]
+#[cfg(any(feature = "teensy", feature = "host"))]
 mod state;
+#[cfg(any(feature = "teensy", feature = "host"))]
+mod ui;
+
 #[cfg(feature = "teensy")]
 mod teensy;
-#[cfg(feature = "teensy")]
-mod ui;
 
 #[cfg(feature = "teensy")]
 extern crate alloc;
@@ -83,25 +84,7 @@ mod firmware {
 }
 
 #[cfg(feature = "host")]
-mod app_event;
-#[cfg(feature = "host")]
-mod calc;
-#[cfg(feature = "host")]
-mod core;
-#[cfg(feature = "host")]
 mod host;
-#[cfg(feature = "host")]
-mod midi;
-#[cfg(feature = "host")]
-mod notes;
-#[cfg(feature = "host")]
-mod output;
-#[cfg(feature = "host")]
-mod runtime;
-#[cfg(feature = "host")]
-mod state;
-#[cfg(feature = "host")]
-mod ui;
 
 #[cfg(feature = "host")]
 fn main() {

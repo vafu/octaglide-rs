@@ -51,7 +51,7 @@ pub async fn run_core(
         ui_writer,
         Selection {
             voice: VoiceId(0),
-            lane: 2,
+            lane: 0,
         },
     );
     ui.publish(core.snapshot(ui.selected().voice, ui.selected().lane));

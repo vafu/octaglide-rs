@@ -9,7 +9,15 @@ fn snapshot(controls: [Option<f32>; 8]) -> crate::core::ConsumerSnapshot {
         output_slot: 0,
         controls,
         mode: 0,
+        mode_count: 3,
     }
+}
+
+fn snapshot_with_mode(mode: u8, mode_count: u8) -> crate::core::ConsumerSnapshot {
+    let mut snapshot = snapshot([None; 8]);
+    snapshot.mode = mode;
+    snapshot.mode_count = mode_count;
+    snapshot
 }
 
 fn controller() -> Controller {
@@ -132,17 +140,50 @@ fn slider_after_voice_selection_targets_the_new_voice() {
 }
 
 #[test]
-fn mode_update_targets_selected_voice_and_lane() {
+fn encoder_wraps_the_mode_index_in_the_ui() {
     let mut ui = controller();
-    let updates = ui.handle(UiEvent::Encoder { increment: true }, None, Some(2), Some(4));
+    // Mode 2 of 3, incrementing wraps to 0.
+    let at_last = snapshot_with_mode(2, 3);
+    let updates = ui.handle(
+        UiEvent::Encoder { increment: true },
+        Some(at_last),
+        Some(2),
+        Some(4),
+    );
     assert!(matches!(
         updates.first(),
-        Some(crate::core::Input::ModeUpdate {
+        Some(crate::core::Input::ModeSet {
             voice: VoiceId(0),
             lane: 2,
-            direction: 1
+            index: 0
         })
     ));
+
+    // Mode 0, decrementing wraps to the last index.
+    let at_first = snapshot_with_mode(0, 3);
+    let updates = ui.handle(
+        UiEvent::Encoder { increment: false },
+        Some(at_first),
+        Some(2),
+        Some(4),
+    );
+    assert!(matches!(
+        updates.first(),
+        Some(crate::core::Input::ModeSet { index: 2, .. })
+    ));
+}
+
+#[test]
+fn encoder_does_nothing_for_consumers_without_modes() {
+    let mut ui = controller();
+    let no_modes = snapshot_with_mode(0, 0);
+    let updates = ui.handle(
+        UiEvent::Encoder { increment: true },
+        Some(no_modes),
+        Some(2),
+        Some(4),
+    );
+    assert!(updates.is_empty());
 }
 
 #[test]

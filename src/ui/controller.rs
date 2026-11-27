@@ -124,13 +124,24 @@ impl Controller {
                     .ok();
             }
             UiEvent::Encoder { increment } => {
-                updates
-                    .push(Input::ModeUpdate {
-                        voice: self.selected.voice,
-                        lane: self.selected.lane,
-                        direction: if increment { 1 } else { -1 },
-                    })
-                    .ok();
+                // Wrapping is a UI concern: core only ever receives an
+                // absolute mode index.
+                let count = snapshot.as_ref().map_or(0, |snapshot| snapshot.mode_count);
+                if count > 0 {
+                    let current = snapshot.as_ref().map_or(0, |snapshot| snapshot.mode);
+                    let next = if increment {
+                        (current + 1) % count
+                    } else {
+                        (current + count - 1) % count
+                    };
+                    updates
+                        .push(Input::ModeSet {
+                            voice: self.selected.voice,
+                            lane: self.selected.lane,
+                            index: next,
+                        })
+                        .ok();
+                }
             }
             UiEvent::EncoderClick { pressed } => {
                 self.encoder_held = pressed;

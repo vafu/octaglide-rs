@@ -3,7 +3,7 @@ use enum_dispatch::enum_dispatch;
 use crate::core::{Input, OutputEvents};
 
 mod dispatch;
-pub(crate) mod envelope;
+pub mod envelope;
 pub(crate) mod glide;
 mod octave;
 
@@ -24,10 +24,16 @@ pub trait Consumer {
     fn control_slot_value(&self, _slot: u8) -> Option<f32> {
         None
     }
+    /// Number of selectable modes; zero means the consumer has none.
+    fn mode_count(&self) -> u8 {
+        0
+    }
+    /// Currently selected mode, as an index into `mode_count`.
     fn mode_index(&self) -> u8 {
         0
     }
-    fn update_mode(&mut self, _direction: i8) {}
+    /// Selects a mode by index. Out-of-range indices are ignored.
+    fn set_mode(&mut self, _index: u8) {}
     fn output_slot(&self) -> u8 {
         0
     }

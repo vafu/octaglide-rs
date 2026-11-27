@@ -1,6 +1,6 @@
 use super::{Consumer, EnvelopeMode, Input, VoiceId, VoiceOutput};
 use crate::{
-    calc,
+    core::consumers::envelope::calc,
     core::{Cmd, Settings, consumers::ModTrigger},
     output::OutputMessage,
 };
@@ -78,20 +78,32 @@ fn semantic_control_slots_map_to_envelope_controls() {
 }
 
 #[test]
-fn mode_updates_cycle_only_the_targeted_consumer() {
+fn mode_selection_takes_an_absolute_index() {
     let _guard = TEST_NOTES.lock().unwrap();
     block_on(async {
         let (sender, _) = channel();
         let mut envelope = ModTrigger::new(VoiceId(0), 0, sender);
         assert_eq!(envelope.mode(), EnvelopeMode::Ad);
-        envelope.update_mode(1);
+        assert_eq!(envelope.mode_count(), EnvelopeMode::COUNT);
+
+        envelope.set_mode(1);
         assert_eq!(envelope.mode(), EnvelopeMode::Ar);
-        envelope.update_mode(1);
+        envelope.set_mode(2);
         assert_eq!(envelope.mode(), EnvelopeMode::Adsr);
-        envelope.update_mode(1);
+        envelope.set_mode(0);
         assert_eq!(envelope.mode(), EnvelopeMode::Ad);
-        envelope.update_mode(-1);
-        assert_eq!(envelope.mode(), EnvelopeMode::Adsr);
+    });
+}
+
+#[test]
+fn out_of_range_mode_index_is_ignored() {
+    let _guard = TEST_NOTES.lock().unwrap();
+    block_on(async {
+        let (sender, _) = channel();
+        let mut envelope = ModTrigger::new(VoiceId(0), 0, sender);
+        envelope.set_mode(1);
+        envelope.set_mode(9);
+        assert_eq!(envelope.mode(), EnvelopeMode::Ar, "index left unchanged");
     });
 }
 

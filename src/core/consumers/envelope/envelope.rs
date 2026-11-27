@@ -1,12 +1,13 @@
 use heapless::Vec;
 
 use crate::{
-    calc::{self, Level, StageSel},
     core::{
         EnvelopeStageState, EnvelopeState, Modulation, Messages, VoiceId, VoiceOutput,
     },
     notes,
 };
+
+use super::calc::{self, Level, StageSel};
 
 const CC_TO_MS: u32 = 16;
 

@@ -1,4 +1,4 @@
-//! Single-owner storage for every bounded runtime channel.
+//! Single-owner storage for the runtime's bounded channels.
 
 use rtic_sync::{
     channel::Channel,
@@ -20,7 +20,9 @@ pub struct RuntimeStorage {
     pub app: Channel<AppEvent, APP_EVENT_CAPACITY>,
     pub buttons: Channel<ButtonEdge, BUTTON_QUEUE_CAPACITY>,
     pub ui: Signal<DisplaySnapshot>,
-    pub animators: [[Channel<Cmd, 1>; ANIMATORS_PER_VOICE]; MAX_VOICES],
+    /// One command channel per (voice, animator). Split into senders for
+    /// `Core` and receivers for the animation engines.
+    pub animator_cmds: [[Channel<Cmd, 1>; ANIMATORS_PER_VOICE]; MAX_VOICES],
 }
 
 /// Split endpoints for a [`RuntimeStorage`].
@@ -33,7 +35,9 @@ pub struct RuntimeHandles {
     pub button_receiver: crate::ui::ButtonReceiver,
     pub ui_writer: rtic_sync::signal::SignalWriter<'static, DisplaySnapshot>,
     pub ui_reader: rtic_sync::signal::SignalReader<'static, DisplaySnapshot>,
+    /// Senders handed to `Core`, so consumers can drive their modulators.
     pub animators: [VoiceAnimators; MAX_VOICES],
+    /// Receivers driven by the animation task.
     pub engines: [[AnimationEngine; ANIMATORS_PER_VOICE]; MAX_VOICES],
 }
 
@@ -45,7 +49,7 @@ impl RuntimeStorage {
             app: Channel::new(),
             buttons: Channel::new(),
             ui: Signal::new(),
-            animators: [const { [const { Channel::new() }; ANIMATORS_PER_VOICE] }; MAX_VOICES],
+            animator_cmds: [const { [const { Channel::new() }; ANIMATORS_PER_VOICE] }; MAX_VOICES],
         }
     }
 
@@ -63,7 +67,7 @@ impl RuntimeStorage {
         let mut engines: [Option<[AnimationEngine; ANIMATORS_PER_VOICE]>; MAX_VOICES] =
             [const { None }; MAX_VOICES];
 
-        for (index, channels) in self.animators.iter_mut().enumerate() {
+        for (index, channels) in self.animator_cmds.iter_mut().enumerate() {
             let [glide, first, second] = channels;
             let (glide_tx, glide_rx) = glide.split();
             let (first_tx, first_rx) = first.split();

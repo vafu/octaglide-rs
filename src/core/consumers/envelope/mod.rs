@@ -6,6 +6,7 @@ use crate::{
 };
 
 use super::{Consumer, CONTROL_SLOTS};
+pub mod calc;
 mod envelope;
 pub(crate) use self::envelope::Envelope;
 
@@ -112,9 +113,13 @@ impl Consumer for ModTrigger {
                     false
                 }
             }
-            Input::ModeUpdate { voice, direction, .. } if voice == self.voice_id => {
-                self.settings.mode = self.settings.mode.step(direction);
-                true
+            Input::ModeSet { voice, index, .. } if voice == self.voice_id => {
+                if index < EnvelopeMode::COUNT {
+                    self.settings.mode = EnvelopeMode::from_index(index);
+                    true
+                } else {
+                    false
+                }
             }
             _ => false,
         };
@@ -140,12 +145,18 @@ impl Consumer for ModTrigger {
             .map(|control| self.get(control))
     }
 
+    fn mode_count(&self) -> u8 {
+        EnvelopeMode::COUNT
+    }
+
     fn mode_index(&self) -> u8 {
         self.settings.mode.index()
     }
 
-    fn update_mode(&mut self, direction: i8) {
-        self.settings.mode = self.settings.mode.step(direction);
+    fn set_mode(&mut self, index: u8) {
+        if index < EnvelopeMode::COUNT {
+            self.settings.mode = EnvelopeMode::from_index(index);
+        }
     }
 
     fn output_slot(&self) -> u8 {

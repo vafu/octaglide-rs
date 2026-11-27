@@ -51,7 +51,7 @@ impl Core {
                     self.emit(outputs).await;
                 }
             }
-            Input::ControlUpdate { voice, lane, .. } | Input::ModeUpdate { voice, lane, .. } => {
+            Input::ControlUpdate { voice, lane, .. } | Input::ModeSet { voice, lane, .. } => {
                 if let Some(target) = self.voice_mut(voice) {
                     let outputs = target.process_lane(lane, input).await;
                     self.emit(outputs).await;

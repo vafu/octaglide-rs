@@ -149,10 +149,14 @@ impl Consumer for Glider {
                     false
                 }
             }
-            Input::ModeUpdate { voice, direction, .. } if voice == self.voice_id => {
-                let mode = self.mode().step(direction);
-                self.settings.enabled = matches!(mode, GlideMode::Enabled);
-                true
+            Input::ModeSet { voice, index, .. } if voice == self.voice_id => {
+                if index < GlideMode::COUNT {
+                    self.settings.enabled =
+                        matches!(GlideMode::from_index(index), GlideMode::Enabled);
+                    true
+                } else {
+                    false
+                }
             }
             _ => false,
         };
@@ -178,12 +182,18 @@ impl Consumer for Glider {
             .map(|control| self.get(control))
     }
 
+    fn mode_count(&self) -> u8 {
+        GlideMode::COUNT
+    }
+
     fn mode_index(&self) -> u8 {
         self.mode().index()
     }
 
-    fn update_mode(&mut self, direction: i8) {
-        self.settings.enabled = matches!(self.mode().step(direction), GlideMode::Enabled);
+    fn set_mode(&mut self, index: u8) {
+        if index < GlideMode::COUNT {
+            self.settings.enabled = matches!(GlideMode::from_index(index), GlideMode::Enabled);
+        }
     }
 }
 

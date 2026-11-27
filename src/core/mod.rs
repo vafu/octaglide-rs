@@ -2,7 +2,7 @@
 
 mod animator;
 mod clock;
-mod consumers;
+pub mod consumers;
 mod control;
 mod core;
 mod modulator;
@@ -50,7 +50,8 @@ pub enum Input {
     NoteOn { voice: VoiceId, note: u8, velocity: u8 },
     NoteOff { voice: VoiceId, note: u8, velocity: u8 },
     ControlUpdate { voice: VoiceId, lane: usize, control: u8, value: f32 },
-    ModeUpdate { voice: VoiceId, lane: usize, direction: i8 },
+    /// Select one of a consumer's modes by index. The UI owns wrapping.
+    ModeSet { voice: VoiceId, lane: usize, index: u8 },
 }
 
 /// Maximum semantic outputs passed between consumers in one step.
@@ -86,6 +87,8 @@ pub struct ConsumerSnapshot {
     pub output_slot: u8,
     pub controls: [Option<f32>; CONTROL_SLOTS],
     pub mode: u8,
+    /// How many modes the consumer offers; zero means mode selection is moot.
+    pub mode_count: u8,
 }
 
 #[cfg(test)]
