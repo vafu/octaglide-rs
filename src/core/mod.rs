@@ -12,8 +12,9 @@ use heapless::Vec;
 
 use crate::output::OutputSender;
 
-pub use self::animator::{
-    ANIMATORS_PER_VOICE, Animator, AnimationEngine, Cmd, Settings, VoiceAnimators,
+pub use self::animator::{Animator, AnimationEngine, Cmd};
+pub use self::modulator::{
+    split_animator_slots, Settings, VoiceAnimators, ANIMATORS_PER_VOICE,
 };
 pub use self::clock::Clock;
 pub use self::consumers::{

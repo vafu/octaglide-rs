@@ -59,7 +59,7 @@ pub enum Voicing {
 }
 
 /// The four addressable modulation lanes.
-#[enum_dispatch(ModLane)]
+#[enum_dispatch(ModLane, Consumer)]
 #[derive(Debug)]
 pub enum ModLanes {
     Passthrough(Passthrough),
@@ -73,27 +73,4 @@ pub enum ConsumerKind {
     Octave,
     ModTrigger,
     Glider,
-}
-
-impl Consumer for ModLanes {
-    async fn consume(&mut self, input: &Input, out: &mut OutputEvents) -> bool {
-        match self {
-            Self::Passthrough(inner) => inner.consume(input, out).await,
-            Self::ModTrigger(inner) => inner.consume(input, out).await,
-        }
-    }
-
-    fn set_control_slot(&mut self, slot: u8, value: f32) {
-        match self {
-            Self::Passthrough(inner) => inner.set_control_slot(slot, value),
-            Self::ModTrigger(inner) => inner.set_control_slot(slot, value),
-        }
-    }
-
-    fn control_slot_value(&self, slot: u8) -> Option<f32> {
-        match self {
-            Self::Passthrough(inner) => inner.control_slot_value(slot),
-            Self::ModTrigger(inner) => inner.control_slot_value(slot),
-        }
-    }
 }

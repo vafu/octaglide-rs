@@ -1,24 +1,14 @@
 use crate::core::{
     Animator, Cmd, Input, Modulator, OutputEvents, Settings, VoiceId,
 };
+use crate::core::modulator::EnvelopeControl;
 
-use super::{Consumer, ModLane, CONTROL_SLOTS};
+use super::{Consumer, ModLane};
 pub mod calc;
 mod envelope;
 pub mod settings;
 pub(crate) use self::envelope::Envelope;
 pub use self::settings::{EnvelopeMode, EnvelopeStageState, EnvelopeState};
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum ModTriggerControl {
-    AttackDuration,
-    DecayDuration,
-    Sustain,
-    ReleaseDuration,
-    AttackCurve,
-    DecayCurve,
-    ReleaseCurve,
-}
 
 #[derive(Debug)]
 pub struct ModTrigger {
@@ -52,39 +42,28 @@ impl ModTrigger {
         self.output_slot
     }
 
-    const CONTROL_MAP: [Option<ModTriggerControl>; CONTROL_SLOTS] = [
-        Some(ModTriggerControl::ReleaseDuration),
-        Some(ModTriggerControl::Sustain),
-        Some(ModTriggerControl::DecayDuration),
-        Some(ModTriggerControl::AttackDuration),
-        Some(ModTriggerControl::ReleaseCurve),
-        Some(ModTriggerControl::DecayCurve),
-        Some(ModTriggerControl::AttackCurve),
-        None,
-    ];
-
-    fn set(&mut self, control: ModTriggerControl, value: f32) {
+    fn set(&mut self, control: EnvelopeControl, value: f32) {
         let value = normalized_to_u8(value);
         match control {
-            ModTriggerControl::AttackDuration => self.settings.attack.duration = value,
-            ModTriggerControl::DecayDuration => self.settings.decay.duration = value,
-            ModTriggerControl::Sustain => self.settings.sustain = value,
-            ModTriggerControl::ReleaseDuration => self.settings.release.duration = value,
-            ModTriggerControl::AttackCurve => self.settings.attack.curve = value,
-            ModTriggerControl::DecayCurve => self.settings.decay.curve = value,
-            ModTriggerControl::ReleaseCurve => self.settings.release.curve = value,
+            EnvelopeControl::AttackDuration => self.settings.attack.duration = value,
+            EnvelopeControl::DecayDuration => self.settings.decay.duration = value,
+            EnvelopeControl::Sustain => self.settings.sustain = value,
+            EnvelopeControl::ReleaseDuration => self.settings.release.duration = value,
+            EnvelopeControl::AttackCurve => self.settings.attack.curve = value,
+            EnvelopeControl::DecayCurve => self.settings.decay.curve = value,
+            EnvelopeControl::ReleaseCurve => self.settings.release.curve = value,
         }
     }
 
-    fn get(&self, control: ModTriggerControl) -> f32 {
+    fn get(&self, control: EnvelopeControl) -> f32 {
         let value = match control {
-            ModTriggerControl::AttackDuration => self.settings.attack.duration,
-            ModTriggerControl::DecayDuration => self.settings.decay.duration,
-            ModTriggerControl::Sustain => self.settings.sustain,
-            ModTriggerControl::ReleaseDuration => self.settings.release.duration,
-            ModTriggerControl::AttackCurve => self.settings.attack.curve,
-            ModTriggerControl::DecayCurve => self.settings.decay.curve,
-            ModTriggerControl::ReleaseCurve => self.settings.release.curve,
+            EnvelopeControl::AttackDuration => self.settings.attack.duration,
+            EnvelopeControl::DecayDuration => self.settings.decay.duration,
+            EnvelopeControl::Sustain => self.settings.sustain,
+            EnvelopeControl::ReleaseDuration => self.settings.release.duration,
+            EnvelopeControl::AttackCurve => self.settings.attack.curve,
+            EnvelopeControl::DecayCurve => self.settings.decay.curve,
+            EnvelopeControl::ReleaseCurve => self.settings.release.curve,
         };
         value as f32 / 127.0
     }
@@ -105,7 +84,7 @@ impl Consumer for ModTrigger {
                 false
             }
             Input::ControlUpdate { voice, control, value, .. } if voice == self.voice_id => {
-                if let Some(mapped) = Self::CONTROL_MAP.get(control as usize).copied().flatten() {
+                if let Some(mapped) = Self::control_for_slot(control) {
                     self.set(mapped, value);
                     true
                 } else {
@@ -131,19 +110,14 @@ impl Consumer for ModTrigger {
     }
 
     fn set_control_slot(&mut self, slot: u8, value: f32) {
-        if let Some(control) = Self::CONTROL_MAP.get(slot as usize).copied().flatten() {
+        if let Some(control) = Self::control_for_slot(slot) {
             self.set(control, value);
         }
     }
 
     fn control_slot_value(&self, slot: u8) -> Option<f32> {
-        Self::CONTROL_MAP
-            .get(slot as usize)
-            .copied()
-            .flatten()
-            .map(|control| self.get(control))
+        Self::control_for_slot(slot).map(|control| self.get(control))
     }
-
 }
 
 impl ModLane for ModTrigger {

@@ -25,12 +25,12 @@ impl Core {
                 .push(Voice {
                     voicing: vec![
                         Voicing::Octave(Octave::new(id)),
-                        Voicing::Glider(Glider::new(id, resources.glide)),
+                        Voicing::Glider(Glider::new(id, resources.glide[0].clone())),
                     ],
                     modulations: [
                         ModLanes::Passthrough(Passthrough),
                         ModLanes::Passthrough(Passthrough),
-                        ModLanes::ModTrigger(ModTrigger::new(id, 0, first_envelope)),
+                        ModLanes::ModTrigger(ModTrigger::new(id, 0, first_envelope.clone())),
                         ModLanes::ModTrigger(ModTrigger::new(id, 1, second_envelope)),
                     ],
                 })

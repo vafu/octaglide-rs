@@ -2,7 +2,7 @@ use futures::FutureExt;
 use log::debug;
 use rtic_sync::channel::Receiver;
 
-use super::{Clock, Messages, Modulation, Modulator};
+use super::{Clock, Messages, Modulation, Modulator, Settings};
 
 #[derive(Debug)]
 pub struct AnimationEngine {
@@ -119,26 +119,11 @@ impl AnimationEngine {
     }
 }
 
-/// One glide engine and two envelope engines per voice.
-pub const ANIMATORS_PER_VOICE: usize = 3;
-
 pub type Animator = rtic_sync::channel::Sender<'static, Cmd, 1>;
-
-#[derive(Debug)]
-pub struct VoiceAnimators {
-    pub glide: Animator,
-    pub envelopes: [Animator; 2],
-}
 
 #[derive(Debug)]
 pub enum Cmd {
     Start(Modulator),
     Update(Settings),
     Stop,
-}
-
-#[derive(Clone, Copy, Debug)]
-pub enum Settings {
-    Envelope(crate::core::EnvelopeState),
-    Glide(crate::core::GlideState),
 }

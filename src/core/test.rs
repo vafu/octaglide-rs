@@ -131,7 +131,7 @@ fn snapshot_rejects_unknown_voice_and_lane() {
     block_on(async {
         let (output, _receiver) = voice_outputs();
         let resources = std::array::from_fn(|_| crate::core::VoiceAnimators {
-            glide: animator(),
+            glide: [animator()],
             envelopes: [animator(), animator()],
         });
         let core = super::Core::new(output, resources);

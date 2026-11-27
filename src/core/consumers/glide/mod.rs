@@ -1,20 +1,13 @@
 use crate::core::{
     Animator, Cmd, Input, Modulator, OutputEvents, Settings, VoiceId,
 };
+use crate::core::modulator::GlideControl;
 
-use super::{Consumer, CONTROL_SLOTS};
+use super::Consumer;
 mod glide;
 pub mod settings;
 pub(crate) use self::glide::Glide;
 pub use self::settings::{GlideMode, GlideState};
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum GliderControl {
-    Enabled,
-    Duration,
-    BendRange,
-    NoteOnVelocity,
-}
 
 #[derive(Debug)]
 pub struct Glider {
@@ -24,17 +17,6 @@ pub struct Glider {
 }
 
 impl Glider {
-    const CONTROL_MAP: [Option<GliderControl>; CONTROL_SLOTS] = [
-        Some(GliderControl::Enabled),
-        Some(GliderControl::NoteOnVelocity),
-        Some(GliderControl::BendRange),
-        Some(GliderControl::Duration),
-        None,
-        None,
-        None,
-        None,
-    ];
-
     pub fn new(voice_id: VoiceId, animator: Animator) -> Self {
         Self {
             voice_id,
@@ -43,16 +25,16 @@ impl Glider {
         }
     }
 
-    fn set(&mut self, control: GliderControl, value: f32) {
+    fn set(&mut self, control: GlideControl, value: f32) {
         match control {
-            GliderControl::Enabled => self.settings.enabled = value >= 0.5,
-            GliderControl::Duration => {
+            GlideControl::Enabled => self.settings.enabled = value >= 0.5,
+            GlideControl::Duration => {
                 self.settings.duration_ms = libm::roundf(value.clamp(0.0, 1.0) * 4000.0) as u32
             }
-            GliderControl::BendRange => {
+            GlideControl::BendRange => {
                 self.settings.bend_range_semitones = 1.0 + value.clamp(0.0, 1.0) * 23.0
             }
-            GliderControl::NoteOnVelocity => {
+            GlideControl::NoteOnVelocity => {
                 self.settings.note_on_velocity =
                     libm::roundf(1.0 + value.clamp(0.0, 1.0) * 126.0) as u8
             }
@@ -67,14 +49,14 @@ impl Glider {
         }
     }
 
-    fn get(&self, control: GliderControl) -> f32 {
+    fn get(&self, control: GlideControl) -> f32 {
         match control {
-            GliderControl::Enabled => (self.settings.enabled as u8) as f32,
-            GliderControl::Duration => self.settings.duration_ms as f32 / 4000.0,
-            GliderControl::BendRange => {
+            GlideControl::Enabled => (self.settings.enabled as u8) as f32,
+            GlideControl::Duration => self.settings.duration_ms as f32 / 4000.0,
+            GlideControl::BendRange => {
                 ((self.settings.bend_range_semitones - 1.0) / 23.0).clamp(0.0, 1.0)
             }
-            GliderControl::NoteOnVelocity => {
+            GlideControl::NoteOnVelocity => {
                 self.settings.note_on_velocity.saturating_sub(1) as f32 / 126.0
             }
         }
@@ -142,7 +124,7 @@ impl Consumer for Glider {
                 self.handle_note_off(note).await
             }
             Input::ControlUpdate { voice, control, value, .. } if voice == self.voice_id => {
-                if let Some(mapped) = Self::CONTROL_MAP.get(control as usize).copied().flatten() {
+                if let Some(mapped) = Self::control_for_slot(control) {
                     self.set(mapped, value);
                     true
                 } else {
@@ -169,19 +151,14 @@ impl Consumer for Glider {
     }
 
     fn set_control_slot(&mut self, slot: u8, value: f32) {
-        if let Some(control) = Self::CONTROL_MAP.get(slot as usize).copied().flatten() {
+        if let Some(control) = Self::control_for_slot(slot) {
             self.set(control, value);
         }
     }
 
     fn control_slot_value(&self, slot: u8) -> Option<f32> {
-        Self::CONTROL_MAP
-            .get(slot as usize)
-            .copied()
-            .flatten()
-            .map(|control| self.get(control))
+        Self::control_for_slot(slot).map(|control| self.get(control))
     }
-
 }
 
 use crate::notes;

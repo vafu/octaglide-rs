@@ -7,7 +7,10 @@ use rtic_sync::{
 
 use crate::{
     app_event::{AppEvent, APP_EVENT_CAPACITY},
-    core::{AnimationEngine, Cmd, VoiceAnimators, ANIMATORS_PER_VOICE, MAX_VOICES},
+    core::{
+        split_animator_slots, AnimationEngine, Cmd, VoiceAnimators, ANIMATORS_PER_VOICE,
+        MAX_VOICES,
+    },
     output::{OutputMessage, OUTPUT_CHANNEL_CAPACITY},
     ui::{ButtonEdge, DisplaySnapshot, BUTTON_QUEUE_CAPACITY},
 };
@@ -68,19 +71,9 @@ impl RuntimeStorage {
             [const { None }; MAX_VOICES];
 
         for (index, channels) in self.animator_cmds.iter_mut().enumerate() {
-            let [glide, first, second] = channels;
-            let (glide_tx, glide_rx) = glide.split();
-            let (first_tx, first_rx) = first.split();
-            let (second_tx, second_rx) = second.split();
-            animators[index] = Some(VoiceAnimators {
-                glide: glide_tx,
-                envelopes: [first_tx, second_tx],
-            });
-            engines[index] = Some([
-                AnimationEngine::new(glide_rx),
-                AnimationEngine::new(first_rx),
-                AnimationEngine::new(second_rx),
-            ]);
+            let (senders, voice_engines) = split_animator_slots(channels);
+            animators[index] = Some(senders);
+            engines[index] = Some(voice_engines);
         }
 
         RuntimeHandles {
