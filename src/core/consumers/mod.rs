@@ -66,11 +66,14 @@ pub enum ModLanes {
     ModTrigger(ModTrigger),
 }
 
-/// Stable consumer identity used in snapshots.
+/// Stable identity for the addressable consumers in a snapshot.
+///
+/// Only modulation lanes are addressable today, so voicing consumers have no
+/// variants here. Giving them their own address space is a separate design
+/// question; adding them to this enum would imply `Core::snapshot` can reach
+/// them, which it cannot.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ConsumerKind {
     Passthrough,
-    Octave,
     ModTrigger,
-    Glider,
 }

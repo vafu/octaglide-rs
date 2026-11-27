@@ -30,11 +30,6 @@ pub type UiWriter = rtic_sync::signal::SignalWriter<'static, DisplaySnapshot>;
 pub type UiReader = rtic_sync::signal::SignalReader<'static, DisplaySnapshot>;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
-pub struct OctaveUi {
-    pub shift: i8,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq)]
 pub struct ModTriggerUi {
     pub name: &'static str,
     pub output_cc: u8,
@@ -45,19 +40,13 @@ pub struct ModTriggerUi {
     pub mode: u8,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct GliderUi {
-    pub enabled: bool,
-    pub duration_ms: u32,
-    pub bend_range_semitones: f32,
-    pub note_on_velocity: u8,
-}
-
+/// The consumer model the display renders.
+///
+/// One variant while only modulation lanes are addressable. Voicing consumers
+/// will arrive as their own model once `Core` can address them.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum UiModel {
-    Octave(OctaveUi),
     ModTrigger(ModTriggerUi),
-    Glider(GliderUi),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]

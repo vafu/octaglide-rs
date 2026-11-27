@@ -20,37 +20,24 @@ where
     let text_style = MonoTextStyle::new(&FONT_5X8, BinaryColor::On);
     let usb_connected = snapshot.usb_connected;
 
-    let current = match snapshot.model {
-        Some(UiModel::ModTrigger(model)) => model,
-        ref model => {
-            use core::fmt::Write;
-            let mut label = heapless::String::<64>::new();
-            match model {
-                Some(UiModel::Octave(model)) => {
-                    let _ = write!(label, "Octave: {} semitones", model.shift);
-                }
-                Some(UiModel::Glider(model)) => {
-                    let _ = write!(label, "Glide: {} ms", model.duration_ms);
-                }
-                _ => {
-                    let _ = write!(label, "Passthrough");
-                }
-            }
-            draw_usb_status(display, usb_connected)?;
-            let mut heading = heapless::String::<32>::new();
-            let _ = write!(
-                heading,
-                "T{} V{} L{}",
-                snapshot.track + 1,
-                snapshot.voice + 1,
-                snapshot.lane + 1
-            );
-            Text::with_alignment(&heading, Point::new(127, 7), text_style, Alignment::Right)
-                .draw(display)?;
-            Text::new(&label, Point::new(0, 22), text_style).draw(display)?;
-            return Ok(());
-        }
+    let Some(current) = snapshot.model else {
+        use core::fmt::Write;
+        draw_usb_status(display, usb_connected)?;
+        let mut heading = heapless::String::<32>::new();
+        let _ = write!(
+            heading,
+            "T{} V{} L{}",
+            snapshot.track + 1,
+            snapshot.voice + 1,
+            snapshot.lane + 1
+        );
+        Text::with_alignment(&heading, Point::new(127, 7), text_style, Alignment::Right)
+            .draw(display)?;
+        Text::new("Passthrough", Point::new(0, 22), text_style).draw(display)?;
+        return Ok(());
     };
+
+    let UiModel::ModTrigger(current) = current;
 
     draw_usb_status(display, usb_connected)?;
 
