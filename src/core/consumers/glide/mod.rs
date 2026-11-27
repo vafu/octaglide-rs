@@ -182,19 +182,6 @@ impl Consumer for Glider {
             .map(|control| self.get(control))
     }
 
-    fn mode_count(&self) -> u8 {
-        GlideMode::COUNT
-    }
-
-    fn mode_index(&self) -> u8 {
-        self.mode().index()
-    }
-
-    fn set_mode(&mut self, index: u8) {
-        if index < GlideMode::COUNT {
-            self.settings.enabled = matches!(GlideMode::from_index(index), GlideMode::Enabled);
-        }
-    }
 }
 
 use crate::notes;

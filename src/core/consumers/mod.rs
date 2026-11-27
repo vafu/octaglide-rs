@@ -1,3 +1,5 @@
+//! Consumers of semantic input, split by where they sit in a voice.
+
 use enum_dispatch::enum_dispatch;
 
 use crate::core::{Input, OutputEvents};
@@ -6,6 +8,7 @@ mod dispatch;
 pub mod envelope;
 pub(crate) mod glide;
 mod octave;
+mod passthrough;
 
 pub use self::envelope::ModTrigger;
 pub use self::glide::Glider;
@@ -14,9 +17,7 @@ pub use self::passthrough::Passthrough;
 
 pub const CONTROL_SLOTS: usize = 8;
 
-mod passthrough;
-
-/// Processes semantic input independently of MIDI, hardware, or display.
+/// Behaviour shared by every consumer, regardless of position.
 #[enum_dispatch]
 pub trait Consumer {
     async fn consume(&mut self, input: &Input, out: &mut OutputEvents) -> bool;
@@ -24,7 +25,15 @@ pub trait Consumer {
     fn control_slot_value(&self, _slot: u8) -> Option<f32> {
         None
     }
-    /// Number of selectable modes; zero means the consumer has none.
+}
+
+/// A selectable modulation lane, addressed by the UI.
+///
+/// Only lanes carry modes and an output slot: they are the things a user can
+/// select and edit. Voicing consumers have no addressable lane.
+#[enum_dispatch]
+pub trait ModLane: Consumer {
+    /// Number of selectable modes; zero means the lane has none.
     fn mode_count(&self) -> u8 {
         0
     }
@@ -39,14 +48,20 @@ pub trait Consumer {
     }
 }
 
-/// Consumer instances.
+/// The voicing chain: ordered note transforms, applied before modulation lanes.
 #[enum_dispatch(Consumer)]
 #[derive(Debug)]
-pub enum Consumers {
-    Passthrough(Passthrough),
+pub enum Voicing {
     Octave(Octave),
-    ModTrigger(ModTrigger),
     Glider(Glider),
+}
+
+/// The four addressable modulation lanes.
+#[enum_dispatch(ModLane)]
+#[derive(Debug)]
+pub enum ModLanes {
+    Passthrough(Passthrough),
+    ModTrigger(ModTrigger),
 }
 
 /// Stable consumer identity used in snapshots.
@@ -56,4 +71,27 @@ pub enum ConsumerKind {
     Octave,
     ModTrigger,
     Glider,
+}
+
+impl Consumer for ModLanes {
+    async fn consume(&mut self, input: &Input, out: &mut OutputEvents) -> bool {
+        match self {
+            Self::Passthrough(inner) => inner.consume(input, out).await,
+            Self::ModTrigger(inner) => inner.consume(input, out).await,
+        }
+    }
+
+    fn set_control_slot(&mut self, slot: u8, value: f32) {
+        match self {
+            Self::Passthrough(inner) => inner.set_control_slot(slot, value),
+            Self::ModTrigger(inner) => inner.set_control_slot(slot, value),
+        }
+    }
+
+    fn control_slot_value(&self, slot: u8) -> Option<f32> {
+        match self {
+            Self::Passthrough(inner) => inner.control_slot_value(slot),
+            Self::ModTrigger(inner) => inner.control_slot_value(slot),
+        }
+    }
 }

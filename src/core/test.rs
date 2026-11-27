@@ -1,4 +1,4 @@
-use super::{Consumer, EnvelopeMode, Input, VoiceId, VoiceOutput};
+use super::{Consumer, EnvelopeMode, Input, ModLane, VoiceId, VoiceOutput};
 use crate::{
     core::consumers::envelope::calc,
     core::{Cmd, Settings, consumers::ModTrigger},

@@ -5,7 +5,7 @@ use crate::{
     },
 };
 
-use super::{Consumer, CONTROL_SLOTS};
+use super::{Consumer, ModLane, CONTROL_SLOTS};
 pub mod calc;
 mod envelope;
 pub(crate) use self::envelope::Envelope;
@@ -145,6 +145,9 @@ impl Consumer for ModTrigger {
             .map(|control| self.get(control))
     }
 
+}
+
+impl ModLane for ModTrigger {
     fn mode_count(&self) -> u8 {
         EnvelopeMode::COUNT
     }

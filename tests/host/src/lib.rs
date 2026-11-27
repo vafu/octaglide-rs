@@ -12,10 +12,13 @@ mod midi_controller;
 
 #[path = "../../../src/midi/bus.rs"]
 mod midi_bus;
+#[path = "../../../src/midi/dedupe.rs"]
+mod midi_dedupe;
 
 mod midi {
     pub use crate::midi_bus::MidiBus;
     pub use crate::midi_controller::MidiController;
+    pub use crate::midi_dedupe::MidiOutputCache;
     pub use crate::midi_fmt::*;
 }
 #[path = "../../../src/notes/mod.rs"]

@@ -17,7 +17,7 @@ pub use self::animator::{
 };
 pub use self::clock::Clock;
 pub use self::consumers::{
-    Consumer, ConsumerKind, Consumers, CONTROL_SLOTS,
+    Consumer, ConsumerKind, ModLane, ModLanes, Voicing, CONTROL_SLOTS,
 };
 pub use self::modulator::{Messages, Modulation, Modulator};
 pub use crate::state::{
@@ -64,9 +64,8 @@ pub const MODULATION_LANES: usize = 4;
 /// Physical voice: voicing processors followed by exactly four modulation lanes.
 #[derive(Debug)]
 pub struct Voice {
-    idx: usize,
-    voicing: Vec<Consumers, MAX_VOICING_CONSUMERS>,
-    modulations: [Consumers; MODULATION_LANES],
+    voicing: Vec<Voicing, MAX_VOICING_CONSUMERS>,
+    modulations: [ModLanes; MODULATION_LANES],
 }
 
 pub const MAX_VOICES: usize = 4;

@@ -2,7 +2,7 @@ use futures::FutureExt;
 use log::debug;
 use rtic_sync::channel::Receiver;
 
-use super::{Clock, Messages, Modulation, Modulator, VoiceOutput};
+use super::{Clock, Messages, Modulation, Modulator};
 
 #[derive(Debug)]
 pub struct AnimationEngine {
@@ -11,7 +11,6 @@ pub struct AnimationEngine {
     state: State,
     _depth: f32,
     modulator: Option<Modulator>,
-    last_continuous: heapless::Vec<VoiceOutput, DEDUPE_SLOTS>,
 }
 
 #[derive(Debug)]
@@ -24,7 +23,6 @@ enum State {
 }
 
 const MSG_INTERVAL_MS: u32 = 5;
-const DEDUPE_SLOTS: usize = 4;
 
 impl AnimationEngine {
     pub fn new(rx: Receiver<'static, Cmd, 1>) -> Self {
@@ -34,7 +32,6 @@ impl AnimationEngine {
             state: State::Idle,
             _depth: 1.0,
             modulator: None,
-            last_continuous: heapless::Vec::new(),
         }
     }
 
@@ -71,43 +68,10 @@ impl AnimationEngine {
                                 progress_at: new_progress,
                             }
                         }
-                        self.dedupe_messages(res)
+                        res
                     }
                 }
             }
-        }
-    }
-
-    fn dedupe_messages(&mut self, messages: Messages) -> Messages {
-        let mut output = heapless::Vec::new();
-        for msg in messages? {
-            if self.is_duplicate_continuous(&msg) {
-                continue;
-            }
-            let _ = output.push(msg);
-        }
-        if output.is_empty() { None } else { Some(output) }
-    }
-
-    fn is_duplicate_continuous(&mut self, msg: &VoiceOutput) -> bool {
-        let Some(pos) = self
-            .last_continuous
-            .iter()
-            .position(|last| same_continuous_target(last, msg))
-        else {
-            if is_continuous(msg) {
-                if self.last_continuous.push(*msg).is_err() {
-                    self.last_continuous.remove(0);
-                    let _ = self.last_continuous.push(*msg);
-                }
-            }
-            return false;
-        };
-        if self.last_continuous[pos] == *msg {
-            true
-        } else {
-            self.last_continuous[pos] = *msg;
-            false
         }
     }
 
@@ -118,7 +82,6 @@ impl AnimationEngine {
         };
         match cmd {
             Cmd::Start(modulator) => {
-                self.last_continuous.clear();
                 let mut messages = if let Some(old_mod) = self.modulator.as_mut() {
                     old_mod.reset().await.unwrap_or(heapless::Vec::new())
                 } else {
@@ -134,7 +97,7 @@ impl AnimationEngine {
                         let _ = messages.push(msg);
                     }
                 }
-                self.dedupe_messages(Some(messages))
+                Some(messages)
             }
             Cmd::Update(settings) => {
                 if let Some(modulator) = self.modulator.as_mut() {
@@ -150,29 +113,9 @@ impl AnimationEngine {
                     }
                     State::Idle => self.modulator.as_mut()?.reset().await,
                 };
-                let messages = self.dedupe_messages(messages);
-                self.last_continuous.clear();
                 messages
             }
         }
-    }
-}
-
-fn is_continuous(msg: &VoiceOutput) -> bool {
-    matches!(msg, VoiceOutput::Control { .. } | VoiceOutput::PitchBend { .. })
-}
-
-fn same_continuous_target(a: &VoiceOutput, b: &VoiceOutput) -> bool {
-    match (a, b) {
-        (
-            VoiceOutput::Control { voice: a_voice, slot: a_slot, .. },
-            VoiceOutput::Control { voice: b_voice, slot: b_slot, .. },
-        ) => a_voice == b_voice && a_slot == b_slot,
-        (
-            VoiceOutput::PitchBend { voice: a_voice, .. },
-            VoiceOutput::PitchBend { voice: b_voice, .. },
-        ) => a_voice == b_voice,
-        _ => false,
     }
 }
 

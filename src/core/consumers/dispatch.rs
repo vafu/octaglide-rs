@@ -1,13 +1,11 @@
-use super::{Consumer, ConsumerKind, Consumers};
+use super::{Consumer, ConsumerKind, ModLane, ModLanes};
 use crate::core::{ConsumerSnapshot, CONTROL_SLOTS};
 
-impl Consumers {
+impl ModLanes {
     pub(crate) fn kind(&self) -> ConsumerKind {
         match self {
             Self::Passthrough(_) => ConsumerKind::Passthrough,
-            Self::Octave(_) => ConsumerKind::Octave,
             Self::ModTrigger(_) => ConsumerKind::ModTrigger,
-            Self::Glider(_) => ConsumerKind::Glider,
         }
     }
 

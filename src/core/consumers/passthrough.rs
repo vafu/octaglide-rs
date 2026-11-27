@@ -2,7 +2,7 @@
 
 use crate::core::{Input, OutputEvents};
 
-use super::Consumer;
+use super::{Consumer, ModLane};
 
 /// Leaves every event for the next consumer or the voice output.
 #[derive(Debug)]
@@ -13,3 +13,5 @@ impl Consumer for Passthrough {
         false
     }
 }
+
+impl ModLane for Passthrough {}
