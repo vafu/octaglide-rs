@@ -139,6 +139,6 @@ pub enum Cmd {
 
 #[derive(Clone, Copy, Debug)]
 pub enum Settings {
-    Envelope(crate::state::EnvelopeState),
-    Glide(crate::state::GlideState),
+    Envelope(crate::core::EnvelopeState),
+    Glide(crate::core::GlideState),
 }

@@ -1,12 +1,12 @@
-use crate::{
-    core::{
-        Animator, Cmd, GlideMode, GlideState, Input, Modulator, OutputEvents, Settings, VoiceId,
-    },
+use crate::core::{
+    Animator, Cmd, Input, Modulator, OutputEvents, Settings, VoiceId,
 };
 
 use super::{Consumer, CONTROL_SLOTS};
 mod glide;
+pub mod settings;
 pub(crate) use self::glide::Glide;
+pub use self::settings::{GlideMode, GlideState};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum GliderControl {

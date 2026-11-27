@@ -9,21 +9,12 @@ compile_error!("teensy and host features are mutually exclusive");
 
 // Shared by both platforms; the platform modules below pick their own
 // board support and entry point.
-#[cfg(any(feature = "teensy", feature = "host"))]
 mod app_event;
-#[cfg(any(feature = "teensy", feature = "host"))]
 mod core;
-#[cfg(any(feature = "teensy", feature = "host"))]
 mod midi;
-#[cfg(any(feature = "teensy", feature = "host"))]
 mod notes;
-#[cfg(any(feature = "teensy", feature = "host"))]
 mod output;
-#[cfg(any(feature = "teensy", feature = "host"))]
 mod runtime;
-#[cfg(any(feature = "teensy", feature = "host"))]
-mod state;
-#[cfg(any(feature = "teensy", feature = "host"))]
 mod ui;
 
 #[cfg(feature = "teensy")]

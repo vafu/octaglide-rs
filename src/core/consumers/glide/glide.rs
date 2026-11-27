@@ -1,9 +1,11 @@
 use heapless::Vec;
 
 use crate::{
-    core::{GlideState, Messages, Modulation, VoiceId, VoiceOutput},
+    core::{Messages, Modulation, VoiceId, VoiceOutput},
     notes,
 };
+
+use super::settings::GlideState;
 
 const FALLBACK_BEND_RANGE_SEMITONES: f32 = 1.0;
 

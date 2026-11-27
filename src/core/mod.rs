@@ -20,9 +20,11 @@ pub use self::consumers::{
     Consumer, ConsumerKind, ModLane, ModLanes, Voicing, CONTROL_SLOTS,
 };
 pub use self::modulator::{Messages, Modulation, Modulator};
-pub use crate::state::{
-    EnvelopeMode, EnvelopeStageState, EnvelopeState, GlideMode, GlideState, OctaveState,
+pub use self::consumers::envelope::settings::{
+    EnvelopeMode, EnvelopeStageState, EnvelopeState,
 };
+pub use self::consumers::glide::settings::{GlideMode, GlideState};
+pub use self::consumers::OctaveState;
 
 #[cfg(target_os = "none")]
 pub(crate) use control::normalize_adc_10bit;

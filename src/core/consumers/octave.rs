@@ -1,4 +1,6 @@
-use crate::core::{Input, OctaveState, OutputEvents, VoiceId, VoiceOutput};
+use crate::core::{Input, OutputEvents, VoiceId, VoiceOutput};
+
+use super::octave_settings::OctaveState;
 
 use super::{Consumer, CONTROL_SLOTS};
 

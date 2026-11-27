@@ -1,14 +1,13 @@
-use crate::{
-    core::{
-        Animator, Cmd, EnvelopeMode, EnvelopeState, Input, Modulator, OutputEvents, Settings,
-        VoiceId,
-    },
+use crate::core::{
+    Animator, Cmd, Input, Modulator, OutputEvents, Settings, VoiceId,
 };
 
 use super::{Consumer, ModLane, CONTROL_SLOTS};
 pub mod calc;
 mod envelope;
+pub mod settings;
 pub(crate) use self::envelope::Envelope;
+pub use self::settings::{EnvelopeMode, EnvelopeStageState, EnvelopeState};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ModTriggerControl {

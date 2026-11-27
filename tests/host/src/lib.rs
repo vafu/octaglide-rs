@@ -25,8 +25,6 @@ mod midi {
 mod notes;
 #[path = "../../../src/output/mod.rs"]
 mod output;
-#[path = "../../../src/state/mod.rs"]
-mod state;
 #[path = "../../../src/runtime/mod.rs"]
 mod runtime;
 #[path = "../../../src/ui/mod.rs"]

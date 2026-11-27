@@ -8,11 +8,13 @@ mod dispatch;
 pub mod envelope;
 pub(crate) mod glide;
 mod octave;
+mod octave_settings;
 mod passthrough;
 
 pub use self::envelope::ModTrigger;
 pub use self::glide::Glider;
 pub use self::octave::Octave;
+pub use self::octave_settings::OctaveState;
 pub use self::passthrough::Passthrough;
 
 pub const CONTROL_SLOTS: usize = 8;
