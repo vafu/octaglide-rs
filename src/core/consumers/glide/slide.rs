@@ -1,12 +1,15 @@
-use crate::core::{Modulation, OutputEvents, VoiceId, VoiceOutput};
+use crate::core::{OutputEvents, VoiceId, VoiceOutput};
 
 use super::settings::GlideState;
 
 const FALLBACK_BEND_RANGE_SEMITONES: f32 = 1.0;
 
 /// A running slide from `from` to `to`.
+///
+/// Internal state machine: it is not a slot occupant, so it does not
+/// implement `Modulation`.
 #[derive(Debug)]
-pub struct Glide {
+pub struct Slide {
     voice: VoiceId,
     settings: GlideState,
     from: u8,
@@ -16,7 +19,7 @@ pub struct Glide {
     finished: bool,
 }
 
-impl Glide {
+impl Slide {
     pub fn new(voice: VoiceId, settings: GlideState, from: u8, to: u8) -> Self {
         Self {
             voice,
@@ -102,8 +105,8 @@ impl Glide {
     }
 }
 
-impl Modulation for Glide {
-    fn advance(&mut self, delta_ms: u32, _gated: bool) -> Option<OutputEvents> {
+impl Slide {
+    pub fn advance(&mut self, delta_ms: u32, _gated: bool) -> Option<OutputEvents> {
         if self.finished {
             return None;
         }
@@ -117,7 +120,7 @@ impl Modulation for Glide {
         Some(messages)
     }
 
-    fn reset(&mut self) -> OutputEvents {
+    pub fn reset(&mut self) -> OutputEvents {
         let mut messages = OutputEvents::new();
         messages
             .push(VoiceOutput::PitchBend {

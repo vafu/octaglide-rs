@@ -3,6 +3,7 @@ mod controller;
 mod display;
 mod encoder;
 mod envelope_plot;
+mod section;
 mod snapshot;
 
 pub use buttons::{take_next_release, ButtonDebouncer};
@@ -10,6 +11,7 @@ pub use controller::{Controller, UiEvent};
 pub(crate) use envelope_plot::envelope_plot_level;
 pub use display::draw_snapshot;
 pub use encoder::EncoderDecoder;
+pub use section::Section;
 
 #[cfg(test)]
 mod test;
@@ -29,17 +31,12 @@ pub type ButtonReceiver = rtic_sync::channel::Receiver<'static, ButtonEdge, BUTT
 pub type UiWriter = rtic_sync::signal::SignalWriter<'static, DisplaySnapshot>;
 pub type UiReader = rtic_sync::signal::SignalReader<'static, DisplaySnapshot>;
 
-use crate::core::Section;
-
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct ModTriggerUi {
     pub name: &'static str,
     pub output_cc: u8,
-    pub attack: EnvelopeStageUi,
-    pub decay: EnvelopeStageUi,
-    pub sustain: u8,
-    pub release: EnvelopeStageUi,
-    pub mode: u8,
+    /// The same settings the engine plays, so the plot cannot drift.
+    pub envelope: crate::core::EnvelopeState,
 }
 
 /// The consumer model the display renders.
@@ -61,12 +58,6 @@ pub struct GliderUi {
     pub duration_ms: u32,
     pub bend_range_semitones: f32,
     pub note_on_velocity: u8,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct EnvelopeStageUi {
-    pub duration: u8,
-    pub curve: u8,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]

@@ -19,7 +19,7 @@ fn midi_note_reaches_core_output() {
             handles.ui_writer.clone(),
             Selection {
                 voice: VoiceId(0),
-                slot: crate::core::Slot::new(crate::core::Section::Modulation, 2),
+                slot: 10,
             },
         );
         let note = MidiMsg::ChannelVoice {

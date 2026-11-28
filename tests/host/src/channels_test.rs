@@ -33,7 +33,7 @@ fn signal_round_trips_a_snapshot() {
     let snapshot = crate::ui::DisplaySnapshot {
         track: 2,
         voice: 0,
-        section: crate::core::Section::Modulation,
+        section: crate::ui::Section::Modulation,
         lane: 2,
         usb_connected: false,
         model: None,

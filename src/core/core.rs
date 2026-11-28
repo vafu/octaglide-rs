@@ -4,8 +4,8 @@ use crate::output::{OutputMessage, OutputSender};
 
 use super::consumers::{Glider, ModTrigger, Noop, Octave, SlotConsumer};
 use super::{
-    Core, HeldNotes, Input, NoteKind, NoteTransition, OutputEvents, Section, Selection, Slot,
-    Voice, VoiceId, MAX_VOICES,
+    Core, HeldNotes, Input, NoteKind, NoteTransition, OutputEvents, Selection, Voice, VoiceId,
+    MAX_VOICES,
 };
 
 impl Core {
@@ -13,24 +13,27 @@ impl Core {
         let mut voices = Vec::new();
         for index in 0..MAX_VOICES {
             let id = VoiceId(index as u8);
-            let noop = || SlotConsumer::Noop(Noop);
+            // Default patch: 0-3 Sequencing, 4-5 Voicing, 8-9 envelopes,
+            // 12-15 Reserved. Empty slots hold `Noop`.
             voices
                 .push(Voice {
                     slots: [
-                        [noop(), noop(), noop(), noop()],
-                        [
-                            SlotConsumer::Octave(Octave::new(id)),
-                            SlotConsumer::Glider(Glider::new(id)),
-                            noop(),
-                            noop(),
-                        ],
-                        [
-                            SlotConsumer::ModTrigger(ModTrigger::new(id, 0)),
-                            SlotConsumer::ModTrigger(ModTrigger::new(id, 1)),
-                            noop(),
-                            noop(),
-                        ],
-                        [noop(), noop(), noop(), noop()],
+                        SlotConsumer::Noop(Noop),
+                        SlotConsumer::Noop(Noop),
+                        SlotConsumer::Noop(Noop),
+                        SlotConsumer::Noop(Noop),
+                        SlotConsumer::Octave(Octave::new(id)),
+                        SlotConsumer::Glider(Glider::new(id)),
+                        SlotConsumer::Noop(Noop),
+                        SlotConsumer::Noop(Noop),
+                        SlotConsumer::ModTrigger(ModTrigger::new(id, 0)),
+                        SlotConsumer::ModTrigger(ModTrigger::new(id, 1)),
+                        SlotConsumer::Noop(Noop),
+                        SlotConsumer::Noop(Noop),
+                        SlotConsumer::Noop(Noop),
+                        SlotConsumer::Noop(Noop),
+                        SlotConsumer::Noop(Noop),
+                        SlotConsumer::Noop(Noop),
                     ],
                     notes: HeldNotes::new(),
                 })
@@ -70,7 +73,7 @@ impl Core {
         self.emit(out).await;
     }
 
-    pub fn snapshot(&self, voice: VoiceId, slot: Slot) -> Option<super::ConsumerSnapshot> {
+    pub fn snapshot(&self, voice: VoiceId, slot: u8) -> Option<super::ConsumerSnapshot> {
         self.voice(voice).and_then(|voice| voice.snapshot(slot))
     }
 
@@ -118,7 +121,7 @@ impl Default for Selection {
     fn default() -> Self {
         Self {
             voice: VoiceId(0),
-            slot: Slot::new(Section::Modulation, 0),
+            slot: 8,
         }
     }
 }

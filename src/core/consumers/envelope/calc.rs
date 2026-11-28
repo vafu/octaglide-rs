@@ -113,61 +113,46 @@ pub fn envelope_level(progress: f32, curve: u8, from: f32, to: f32) -> f32 {
     from + shaped * (to - from)
 }
 
-#[derive(Clone, Copy)]
-pub struct Stage {
-    pub duration: u8,
-    pub curve: u8,
-}
-
-#[derive(Clone, Copy)]
-pub struct Preview {
-    pub mode: u8,
-    pub attack: Stage,
-    pub decay: Stage,
-    pub release: Stage,
-    pub sustain: f32,
-}
-
 const HOLD_UNITS: f32 = 20.0;
 const TIME_SPAN_UNITS: f32 = 3.0 * 127.0 + HOLD_UNITS;
 const LAST_PIXEL: u32 = 127;
 const PIXEL_UNITS: f32 = TIME_SPAN_UNITS / LAST_PIXEL as f32;
 
-pub fn preview_level(preview: &Preview, x: u32) -> f32 {
+/// Samples the envelope preview at horizontal pixel `x`.
+///
+/// Reads the same `EnvelopeState` the engine plays, so the plot cannot drift
+/// from playback.
+pub fn preview_level(envelope: &crate::core::EnvelopeState, x: u32) -> f32 {
     let time = x.min(LAST_PIXEL) as f32 * TIME_SPAN_UNITS / LAST_PIXEL as f32;
-    let attack = visible_duration(&preview.attack);
+    let sustain = envelope.sustain as f32 / 127.0;
+    let attack = visible_duration(&envelope.attack);
     if attack > 0.0 && time <= attack {
-        return ramp(time, &preview.attack, 0.0, 1.0);
+        return ramp(time, &envelope.attack, 0.0, 1.0);
     }
     let time = time - attack;
-    match preview.mode {
-        0 => ramp(time, &preview.decay, 1.0, 0.0),
+    match envelope.mode.index() {
+        0 => ramp(time, &envelope.decay, 1.0, 0.0),
         1 => {
             if time < HOLD_UNITS {
                 1.0
             } else {
-                ramp(time - HOLD_UNITS, &preview.release, 1.0, 0.0)
+                ramp(time - HOLD_UNITS, &envelope.release, 1.0, 0.0)
             }
         }
         _ => {
-            let decay = visible_duration(&preview.decay);
+            let decay = visible_duration(&envelope.decay);
             if time < decay {
-                ramp(time, &preview.decay, 1.0, preview.sustain)
+                ramp(time, &envelope.decay, 1.0, sustain)
             } else if time < decay + HOLD_UNITS {
-                preview.sustain
+                sustain
             } else {
-                ramp(
-                    time - decay - HOLD_UNITS,
-                    &preview.release,
-                    preview.sustain,
-                    0.0,
-                )
+                ramp(time - decay - HOLD_UNITS, &envelope.release, sustain, 0.0)
             }
         }
     }
 }
 
-fn ramp(time: f32, stage: &Stage, from: f32, to: f32) -> f32 {
+fn ramp(time: f32, stage: &crate::core::EnvelopeStageState, from: f32, to: f32) -> f32 {
     let duration = visible_duration(stage);
     if time < duration {
         envelope_level(time / duration, stage.curve, from, to)
@@ -176,7 +161,7 @@ fn ramp(time: f32, stage: &Stage, from: f32, to: f32) -> f32 {
     }
 }
 
-fn visible_duration(stage: &Stage) -> f32 {
+fn visible_duration(stage: &crate::core::EnvelopeStageState) -> f32 {
     if stage.duration == 0 {
         0.0
     } else {

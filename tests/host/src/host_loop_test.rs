@@ -22,7 +22,7 @@ fn midi_note_does_not_publish_a_snapshot() {
         let mut core = Core::new(handles.output_sender.clone());
         let mut ui = Controller::new(
             handles.ui_writer.clone(),
-            Selection { voice: VoiceId(0), slot: crate::core::Slot::new(crate::core::Section::Modulation, 2) },
+            Selection { voice: VoiceId(0), slot: 10 },
         );
         ui.publish(core.snapshot(ui.selected().voice, ui.selected().slot));
         assert!(handles.ui_reader.try_read().is_some());

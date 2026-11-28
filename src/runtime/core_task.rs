@@ -4,7 +4,7 @@ use futures::future::Either;
 
 use crate::{
     app_event::{AppEvent, AppReceiver},
-    core::{Clock, Core, Section, Selection, VoiceId},
+    core::{Clock, Core, Selection, VoiceId},
     midi::MidiController,
     output::{OutputMessage, OutputSender},
     ui::{Controller, UiWriter},
@@ -54,7 +54,7 @@ pub async fn run_core<C: Clock>(
         ui_writer,
         Selection {
             voice: VoiceId(0),
-            slot: crate::core::Slot::new(Section::Modulation, 0),
+            slot: 8,
         },
     );
     ui.publish(core.snapshot(ui.selected().voice, ui.selected().slot));

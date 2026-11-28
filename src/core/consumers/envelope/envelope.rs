@@ -1,6 +1,4 @@
-use crate::core::{
-    EnvelopeStageState, EnvelopeState, Modulation, OutputEvents, VoiceId, VoiceOutput,
-};
+use crate::core::{EnvelopeStageState, EnvelopeState, OutputEvents, VoiceId, VoiceOutput};
 
 use super::calc::{self, Level, StageSel};
 
@@ -27,7 +25,7 @@ impl Envelope {
             settings,
             stage_idx: 0,
             stage_elapsed: 0,
-            running: !settings.activation.note_triggered(),
+            running: !settings.trigger.note_triggered(),
         }
     }
 
@@ -98,7 +96,7 @@ impl Envelope {
         let done = self.stage_idx >= self.sequence().len();
         if done {
             self.stage_idx = 0;
-            if !self.settings.activation.loops() {
+            if !self.settings.trigger.loops() {
                 self.running = false;
             }
         }
@@ -112,8 +110,8 @@ impl Envelope {
     }
 }
 
-impl Modulation for Envelope {
-    fn advance(&mut self, delta_ms: u32, gated: bool) -> Option<OutputEvents> {
+impl Envelope {
+    pub fn advance(&mut self, delta_ms: u32, gated: bool) -> Option<OutputEvents> {
         if !self.running {
             return None;
         }
@@ -152,17 +150,6 @@ impl Modulation for Envelope {
         }
     }
 
-    fn reset(&mut self) -> OutputEvents {
-        self.stage_idx = 0;
-        self.stage_elapsed = 0;
-        self.running = false;
-        let mut messages = OutputEvents::new();
-        messages.push(self.make_control(0.0)).ok();
-        messages
-    }
-}
-
-impl Envelope {
     fn ramp(&self, progress: f32) -> f32 {
         let calc::StageKind::Ramp { from, to } = self.current_desc().kind else {
             return self.hold_level();

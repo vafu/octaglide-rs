@@ -1,5 +1,6 @@
 use crate::core::consumers::envelope::EnvelopeMode;
-use crate::core::{Section, Slot, VoiceId};
+use crate::core::VoiceId;
+use crate::ui::Section;
 use crate::ui::{Controller, UiEvent};
 use futures::executor::block_on;
 use rtic_sync::signal::Signal;
@@ -27,7 +28,7 @@ fn controller() -> Controller {
         writer,
         crate::core::Selection {
             voice: VoiceId(0),
-            slot: Slot { section: Section::Modulation, index: 2 },
+            slot: Section::Modulation.slot(2),
         },
     )
 }
@@ -41,7 +42,7 @@ fn controller_with_reader() -> (
         writer,
         crate::core::Selection {
             voice: VoiceId(0),
-            slot: Slot { section: Section::Modulation, index: 2 },
+            slot: Section::Modulation.slot(2),
         },
     );
     (ui, reader)
@@ -84,7 +85,7 @@ fn encoder_hold_and_button_release_selects_first_envelope() {
             ui.selected(),
             crate::core::Selection {
                 voice: VoiceId(1),
-                slot: Slot { section: Section::Modulation, index: 0 },
+                slot: Section::Modulation.slot(0),
             }
         );
     });
@@ -101,7 +102,7 @@ fn lane_button_without_modifier_selects_lane() {
         UiEvent::Button { index: 3, pressed: false },
         None,
     );
-    assert_eq!(ui.selected(), crate::core::Selection { voice: VoiceId(0), slot: Slot::new(Section::Modulation, 3) });
+    assert_eq!(ui.selected(), crate::core::Selection { voice: VoiceId(0), slot: Section::Modulation.slot(3) });
 }
 
 #[test]
@@ -126,7 +127,7 @@ fn slider_after_voice_selection_targets_the_new_voice() {
         updates.first(),
         Some(crate::core::Input::ControlUpdate {
             voice: VoiceId(1),
-            slot: Slot { section: Section::Modulation, index: 0 },
+            slot: 8,
             ..
         })
     ));
@@ -145,7 +146,7 @@ fn encoder_wraps_the_mode_index_in_the_ui() {
         updates.first(),
         Some(crate::core::Input::ModeSet {
             voice: VoiceId(0),
-            slot: Slot { section: Section::Modulation, index: 2 },
+            slot: 10,
             index: 0
         })
     ));
@@ -194,7 +195,7 @@ fn slider_pickup_uses_previous_physical_position() {
         accepted.first(),
         Some(crate::core::Input::ControlUpdate {
             voice: VoiceId(0),
-            slot: Slot { section: Section::Modulation, index: 2 },
+            slot: 10,
             control: 0,
             ..
         })
@@ -237,7 +238,7 @@ fn usb_status_publishes_without_changing_selection() {
         None,
     );
     assert!(updates.is_empty());
-    assert_eq!(ui.selected(), crate::core::Selection { voice: VoiceId(0), slot: Slot::new(Section::Modulation, 2) });
+    assert_eq!(ui.selected(), crate::core::Selection { voice: VoiceId(0), slot: Section::Modulation.slot(2) });
 }
 
 #[test]
@@ -250,24 +251,24 @@ fn envelope_mode_indices_round_trip() {
 #[test]
 fn idle_encoder_click_cycles_sections() {
     let mut ui = controller();
-    assert_eq!(ui.selected().slot.section, Section::Modulation);
+    assert_eq!(Section::of(ui.selected().slot), Section::Modulation);
     ui.handle(UiEvent::EncoderClick { pressed: true }, None);
     ui.handle(UiEvent::EncoderClick { pressed: false }, None);
-    assert_eq!(ui.selected().slot.section, Section::Reserved);
+    assert_eq!(Section::of(ui.selected().slot), Section::Reserved);
     ui.handle(UiEvent::EncoderClick { pressed: true }, None);
     ui.handle(UiEvent::EncoderClick { pressed: false }, None);
-    assert_eq!(ui.selected().slot.section, Section::Sequencing);
+    assert_eq!(Section::of(ui.selected().slot), Section::Sequencing);
 }
 
 #[test]
 fn chorded_encoder_click_does_not_cycle_sections() {
     let mut ui = controller();
-    let before = ui.selected().slot.section;
+    let before = Section::of(ui.selected().slot);
     ui.handle(UiEvent::EncoderClick { pressed: true }, None);
     ui.handle(UiEvent::Button { index: 0, pressed: true }, None);
     ui.handle(UiEvent::Button { index: 0, pressed: false }, None);
     ui.handle(UiEvent::EncoderClick { pressed: false }, None);
-    assert_eq!(ui.selected().slot.section, before, "a chord must not cycle");
+    assert_eq!(Section::of(ui.selected().slot), before, "a chord must not cycle");
 }
 
 #[test]
@@ -275,8 +276,8 @@ fn slot_button_selects_within_current_section() {
     let mut ui = controller();
     ui.handle(UiEvent::EncoderClick { pressed: true }, None);
     ui.handle(UiEvent::EncoderClick { pressed: false }, None);
-    let section = ui.selected().slot.section;
+    let section = Section::of(ui.selected().slot);
     ui.handle(UiEvent::Button { index: 2, pressed: true }, None);
     ui.handle(UiEvent::Button { index: 2, pressed: false }, None);
-    assert_eq!(ui.selected().slot, Slot { section, index: 2 });
+    assert_eq!(ui.selected().slot, section.slot(2));
 }

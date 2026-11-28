@@ -1,27 +1,34 @@
 use crate::core::{
-    Input, Modulation, NoteKind, NoteTransition, OutputEvents, Routing, VoiceId, VoiceOutput,
+    Consumer, Input, Modulation, NoteKind, NoteTransition, OutputEvents, Routing, VoiceId,
+    VoiceOutput,
 };
 
-use super::octave_settings::OctaveState;
+use super::macros::consumer;
 
-use super::{Consumer, CONTROL_SLOTS};
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum OctaveControl {
-    Shift,
-}
+/// Shift in semitones, normalized across the full ±48 range.
+const SHIFT_SPAN: f32 = 84.0;
+const SHIFT_OFFSET: f32 = 48.0;
 
 #[derive(Debug)]
 pub struct Octave {
     voice: VoiceId,
-    settings: OctaveState,
+    settings: OctaveSettings,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct OctaveSettings {
+    pub shift: i8,
+}
+
+impl OctaveSettings {
+    pub const INITIAL: Self = Self { shift: 0 };
 }
 
 impl Octave {
     pub fn new(voice: VoiceId) -> Self {
         Self {
             voice,
-            settings: OctaveState::INITIAL,
+            settings: OctaveSettings::INITIAL,
         }
     }
 
@@ -29,20 +36,7 @@ impl Octave {
         (note as i16 + self.settings.shift as i16).clamp(0, 127) as u8
     }
 
-    const CONTROL_MAP: [Option<OctaveControl>; CONTROL_SLOTS] = [
-        Some(OctaveControl::Shift),
-        None,
-        None,
-        None,
-        None,
-        None,
-        None,
-        None,
-    ];
-}
-
-impl Consumer for Octave {
-    fn consume(&mut self, input: &Input, out: &mut OutputEvents) -> Routing {
+    fn consume_input(&mut self, input: &Input, out: &mut OutputEvents) -> Routing {
         match *input {
             Input::Note(NoteTransition { kind, note, velocity, .. }) => {
                 let note = self.shifted_note(note);
@@ -54,12 +48,7 @@ impl Consumer for Octave {
                 Routing::Consumed
             }
             Input::ControlUpdate { control, value, .. } => {
-                if Self::CONTROL_MAP
-                    .get(control as usize)
-                    .copied()
-                    .flatten()
-                    .is_some()
-                {
+                if Self::control_for_slot(control).is_some() {
                     self.set_control_slot(control, value);
                     Routing::Consumed
                 } else {
@@ -70,24 +59,25 @@ impl Consumer for Octave {
         }
     }
 
-    fn wants_notes(&self) -> bool {
-        true
-    }
+    fn after_control_set(&mut self) {}
+}
 
-    fn set_control_slot(&mut self, slot: u8, value: f32) {
-        if let Some(OctaveControl::Shift) =
-            Self::CONTROL_MAP.get(slot as usize).copied().flatten()
-        {
-            self.settings.shift = libm::roundf((value.clamp(0.0, 1.0) * 84.0) - 48.0) as i8;
-        }
-    }
-
-    fn control_slot_value(&self, slot: u8) -> Option<f32> {
-        matches!(
-            Self::CONTROL_MAP.get(slot as usize).copied().flatten(),
-            Some(OctaveControl::Shift)
-        )
-        .then_some((self.settings.shift as f32 + 48.0) / 84.0)
+consumer! {
+    Octave {
+        settings: OctaveSettings,
+        wants_notes: true,
+        output_slot: 0,
+        controls: [
+            0 => Shift {
+                set: |settings: &mut OctaveSettings, value: f32| {
+                    settings.shift =
+                        libm::roundf((value.clamp(0.0, 1.0) * SHIFT_SPAN) - SHIFT_OFFSET) as i8;
+                },
+                get: |settings: &OctaveSettings| {
+                    (settings.shift as f32 + SHIFT_OFFSET) / SHIFT_SPAN
+                },
+            },
+        ],
     }
 }
 

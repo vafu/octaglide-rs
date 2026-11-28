@@ -1,6 +1,6 @@
 //! Envelope settings owned by the envelope consumer.
 
-use crate::core::Activation;
+use crate::core::Trigger;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct EnvelopeStageState {
@@ -43,7 +43,7 @@ pub struct EnvelopeState {
     pub release: EnvelopeStageState,
     pub sustain: u8,
     pub mode: EnvelopeMode,
-    pub activation: Activation,
+    pub trigger: Trigger,
 }
 
 impl EnvelopeState {
@@ -62,6 +62,6 @@ impl EnvelopeState {
         },
         sustain: 80,
         mode: EnvelopeMode::Ad,
-        activation: Activation::NoteOnce,
+        trigger: Trigger::NOTE_ONCE,
     };
 }

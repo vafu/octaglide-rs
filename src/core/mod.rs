@@ -14,10 +14,12 @@ use crate::output::OutputSender;
 
 pub use self::clock::Clock;
 pub use self::consumers::{
-    Consumer, ConsumerKind, Routing, SlotConsumer, CONTROL_SLOTS, SLOTS_PER_SECTION,
+    Consumer, ConsumerKind, Routing, SlotConsumer, CONTROL_SLOTS,
 };
-pub use self::modulator::{Activation, Modulation};
-pub use self::consumers::envelope::settings::{EnvelopeStageState, EnvelopeState};
+pub use self::modulator::{Modulation, Trigger};
+pub use self::consumers::envelope::settings::{
+    EnvelopeMode, EnvelopeStageState, EnvelopeState,
+};
 pub use self::notes::{HeldNotes, NoteKind, NoteTransition};
 
 #[cfg(target_os = "none")]
@@ -34,70 +36,8 @@ pub enum VoiceOutput {
     Control { voice: VoiceId, slot: u8, value: f32 },
 }
 
-/// One of the four addressable chains inside a voice.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Section {
-    Sequencing,
-    Voicing,
-    Modulation,
-    Reserved,
-}
-
-impl Section {
-    pub const COUNT: u8 = 4;
-
-    pub const ALL: [Section; 4] = [
-        Section::Sequencing,
-        Section::Voicing,
-        Section::Modulation,
-        Section::Reserved,
-    ];
-
-    pub const fn index(self) -> u8 {
-        match self {
-            Self::Sequencing => 0,
-            Self::Voicing => 1,
-            Self::Modulation => 2,
-            Self::Reserved => 3,
-        }
-    }
-
-    pub const fn from_index(index: u8) -> Self {
-        match index {
-            0 => Self::Sequencing,
-            1 => Self::Voicing,
-            2 => Self::Modulation,
-            _ => Self::Reserved,
-        }
-    }
-
-    pub const fn next(self) -> Self {
-        Self::from_index((self.index() + 1) % Self::COUNT)
-    }
-
-    pub const fn label(self) -> &'static str {
-        match self {
-            Self::Sequencing => "SEQ",
-            Self::Voicing => "VOI",
-            Self::Modulation => "MOD",
-            Self::Reserved => "RSV",
-        }
-    }
-}
-
-/// Address of one consumer: a section and a slot index within it.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct Slot {
-    pub section: Section,
-    pub index: u8,
-}
-
-impl Slot {
-    pub const fn new(section: Section, index: u8) -> Self {
-        Self { section, index }
-    }
-
-}
+/// Total addressable consumers per voice.
+pub const SLOT_COUNT: u8 = 16;
 
 /// Owns voices and their consumers.
 pub struct Core {
@@ -109,19 +49,23 @@ pub struct Core {
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Input {
     Note(NoteTransition),
-    ControlUpdate { voice: VoiceId, slot: Slot, control: u8, value: f32 },
+    ControlUpdate { voice: VoiceId, slot: u8, control: u8, value: f32 },
     /// Select one of a consumer's modes by index. The UI owns wrapping.
-    ModeSet { voice: VoiceId, slot: Slot, index: u8 },
+    ModeSet { voice: VoiceId, slot: u8, index: u8 },
 }
 
 /// Maximum semantic outputs passed between consumers in one step.
 pub const OUTPUT_CAPACITY: usize = 8;
 pub type OutputEvents = Vec<VoiceOutput, OUTPUT_CAPACITY>;
 
-/// Physical voice: four sections of four addressable consumers.
+/// Physical voice: 16 addressable consumers plus its held-note stack.
+///
+/// Slots are flat and opaque to Core. Which consumer sits in which slot is a
+/// default patch decided at construction; grouping them into sections is the
+/// UI's business.
 #[derive(Debug)]
 pub struct Voice {
-    pub(super) slots: [[SlotConsumer; SLOTS_PER_SECTION]; Section::COUNT as usize],
+    pub(super) slots: [SlotConsumer; SLOT_COUNT as usize],
     pub(super) notes: HeldNotes,
 }
 
@@ -133,7 +77,8 @@ pub struct VoiceId(pub u8);
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Selection {
     pub voice: VoiceId,
-    pub slot: Slot,
+    /// Flat slot index, `0..SLOT_COUNT`.
+    pub slot: u8,
 }
 
 /// Snapshot of one consumer for UI display.

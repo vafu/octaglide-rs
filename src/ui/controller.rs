@@ -1,10 +1,11 @@
 use heapless::Vec;
 
 use crate::{
-    core::{ConsumerSnapshot, Input, Section, Selection, Slot, VoiceId, MAX_VOICES},
+    core::{ConsumerSnapshot, Input, Selection, VoiceId, MAX_VOICES},
     ui::{DisplaySnapshot, UiWriter},
 };
 
+use super::section::Section;
 use super::snapshot::model;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -84,8 +85,8 @@ impl Controller {
         let display = DisplaySnapshot {
             track,
             voice: self.selected.voice.0,
-            section: self.selected.slot.section,
-            lane: self.selected.slot.index,
+            section: Section::of(self.selected.slot),
+            lane: Section::index_of(self.selected.slot),
             usb_connected: self.usb_connected,
             model: snapshot.as_ref().and_then(model),
         };
@@ -180,14 +181,14 @@ impl Controller {
                             if let Some(&voice) = track.voices[..track.count as usize].first() {
                                 self.select(Selection {
                                     voice,
-                                    slot: Slot::new(Section::Modulation, 0),
+                                    slot: Section::Modulation.slot(0),
                                 });
                             }
                         }
                     } else if lane && !captured && !self.encoder_held {
                         self.select(Selection {
                             voice: self.selected.voice,
-                            slot: Slot::new(self.selected.slot.section, index),
+                            slot: Section::of(self.selected.slot).slot(index),
                         });
                     }
                 }
@@ -201,10 +202,10 @@ impl Controller {
     }
 
     fn cycle_section(&mut self) {
-        let section = self.selected.slot.section.next();
+        let section = Section::of(self.selected.slot).next();
         self.select(Selection {
             voice: self.selected.voice,
-            slot: Slot::new(section, self.selected.slot.index),
+            slot: section.slot(Section::index_of(self.selected.slot)),
         });
     }
 

@@ -11,8 +11,7 @@ pub mod envelope;
 pub(crate) mod glide;
 mod noop;
 mod octave;
-mod octave_settings;
-pub(crate) mod registry;
+pub(crate) mod macros;
 
 pub use self::envelope::ModTrigger;
 pub use self::glide::Glider;
@@ -20,7 +19,6 @@ pub use self::noop::Noop;
 pub use self::octave::Octave;
 
 pub const CONTROL_SLOTS: usize = 8;
-pub const SLOTS_PER_SECTION: usize = 4;
 
 /// What a consumer decided to do with the input it received.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

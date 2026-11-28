@@ -8,27 +8,58 @@ use crate::core::consumers::SlotConsumer;
 
 /// How a timed consumer starts and repeats.
 ///
-/// The repeat bit lives here once; variants differ only in how a cycle starts.
+/// Each variant carries the two facts that define it, so there is no separate
+/// `impl` restating the same bit twice.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Activation {
+pub enum Trigger {
     /// Starts on a note press and runs one cycle.
-    NoteOnce,
+    NoteOnce { note_trigger: bool, looping: bool },
     /// Starts on a note press and repeats.
-    NoteLoop,
+    NoteLoop { note_trigger: bool, looping: bool },
     /// Runs continuously from construction and repeats.
-    FreeLoop,
+    FreeLoop { note_trigger: bool, looping: bool },
 }
 
-impl Activation {
+impl Trigger {
+    pub const NOTE_ONCE: Self = Self::NoteOnce { note_trigger: true, looping: false };
+    pub const NOTE_LOOP: Self = Self::NoteLoop { note_trigger: true, looping: true };
+    pub const FREE_LOOP: Self = Self::FreeLoop { note_trigger: false, looping: true };
+
     /// Whether a cycle restarts after it completes.
     pub const fn loops(self) -> bool {
-        matches!(self, Self::NoteLoop | Self::FreeLoop)
+        match self {
+            Self::NoteOnce { looping, .. }
+            | Self::NoteLoop { looping, .. }
+            | Self::FreeLoop { looping, .. } => looping,
+        }
     }
 
     /// Whether a cycle needs a note press to start.
     pub const fn note_triggered(self) -> bool {
-        matches!(self, Self::NoteOnce | Self::NoteLoop)
+        match self {
+            Self::NoteOnce { note_trigger, .. }
+            | Self::NoteLoop { note_trigger, .. }
+            | Self::FreeLoop { note_trigger, .. } => note_trigger,
+        }
     }
+
+    pub const fn index(self) -> u8 {
+        match self {
+            Self::NoteOnce { .. } => 0,
+            Self::NoteLoop { .. } => 1,
+            Self::FreeLoop { .. } => 2,
+        }
+    }
+
+    pub const fn from_index(index: u8) -> Self {
+        match index {
+            1 => Self::NOTE_LOOP,
+            2 => Self::FREE_LOOP,
+            _ => Self::NOTE_ONCE,
+        }
+    }
+
+    pub const COUNT: u8 = 3;
 }
 
 /// A consumer that produces timed output.
@@ -45,9 +76,4 @@ pub trait Modulation {
         None
     }
 
-    /// Stops the running cycle and returns any messages needed to release its
-    /// output. Consumers that are not timed have nothing to release.
-    fn reset(&mut self) -> OutputEvents {
-        OutputEvents::new()
-    }
 }

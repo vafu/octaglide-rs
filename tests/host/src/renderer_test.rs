@@ -6,7 +6,7 @@ use embedded_graphics::{
 };
 
 use crate::ui::{
-    DisplaySnapshot, EnvelopeStageUi, ModTriggerUi, UiModel, draw_snapshot,
+    DisplaySnapshot, ModTriggerUi, UiModel, draw_snapshot,
 };
 
 struct TestDisplay {
@@ -55,7 +55,7 @@ fn passthrough_snapshot() -> DisplaySnapshot {
     DisplaySnapshot {
         track: 0,
         voice: 0,
-        section: crate::core::Section::Modulation,
+        section: crate::ui::Section::Modulation,
         lane: 2,
         usb_connected: true,
         model: None,
@@ -66,17 +66,20 @@ fn envelope_snapshot() -> DisplaySnapshot {
     DisplaySnapshot {
         track: 0,
         voice: 0,
-        section: crate::core::Section::Modulation,
+        section: crate::ui::Section::Modulation,
         lane: 2,
         usb_connected: false,
         model: Some(UiModel::ModTrigger(ModTriggerUi {
             name: "Envelope",
             output_cc: 2,
-            attack: EnvelopeStageUi { duration: 20, curve: 64 },
-            decay: EnvelopeStageUi { duration: 30, curve: 64 },
-            sustain: 90,
-            release: EnvelopeStageUi { duration: 40, curve: 64 },
-            mode: 2,
+            envelope: crate::core::EnvelopeState {
+                attack: crate::core::EnvelopeStageState { duration: 20, curve: 64 },
+                decay: crate::core::EnvelopeStageState { duration: 30, curve: 64 },
+                sustain: 90,
+                release: crate::core::EnvelopeStageState { duration: 40, curve: 64 },
+                mode: crate::core::EnvelopeMode::Adsr,
+                trigger: crate::core::Trigger::NOTE_ONCE,
+            },
         })),
     }
 }

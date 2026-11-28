@@ -1,6 +1,6 @@
 //! Glide settings owned by the glide consumer.
 
-use crate::core::Activation;
+use crate::core::Trigger;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct GlideState {
@@ -8,7 +8,7 @@ pub struct GlideState {
     pub duration_ms: u32,
     pub bend_range_semitones: f32,
     pub note_on_velocity: u8,
-    pub activation: Activation,
+    pub trigger: Trigger,
 }
 
 impl GlideState {
@@ -17,7 +17,7 @@ impl GlideState {
         duration_ms: 200,
         bend_range_semitones: 2.0,
         note_on_velocity: 100,
-        activation: Activation::NoteOnce,
+        trigger: Trigger::NOTE_ONCE,
     };
 }
 

@@ -53,10 +53,10 @@ where
 
     draw_usb_status(display, usb_connected)?;
 
-    let mode_str = match current.mode {
-        0 => "AD",
-        1 => "AR",
-        _ => "ADSR",
+    let mode_str = match current.envelope.mode {
+        crate::core::EnvelopeMode::Ad => "AD",
+        crate::core::EnvelopeMode::Ar => "AR",
+        crate::core::EnvelopeMode::Adsr => "ADSR",
     };
     draw_heading(display, snapshot, text_style)?;
     Text::with_text_style(
@@ -76,9 +76,9 @@ where
 
     let to_y = |lv: f32| BOT - (lv.clamp(0.0, 1.0) * H as f32) as i32;
 
-    let mut prev_y = to_y(envelope_plot_level(&current, 0));
+    let mut prev_y = to_y(envelope_plot_level(&current.envelope, 0));
     for x in 1u32..128 {
-        let y = to_y(envelope_plot_level(&current, x));
+        let y = to_y(envelope_plot_level(&current.envelope, x));
         Line::new(Point::new(x as i32 - 1, prev_y), Point::new(x as i32, y))
             .into_styled(line_style)
             .draw(display)?;

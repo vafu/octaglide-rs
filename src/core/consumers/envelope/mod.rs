@@ -1,12 +1,11 @@
 use crate::core::{
-    Activation, Input, Modulation, NoteKind, NoteTransition, OutputEvents, Routing, VoiceId,
+    Consumer, Input, Modulation, NoteKind, NoteTransition, OutputEvents, Routing, Trigger, VoiceId,
 };
-use crate::core::consumers::registry::EnvelopeControl;
 
-use super::Consumer;
-pub(crate) use self::envelope::Envelope;
+use super::macros::consumer;
 pub mod calc;
 mod envelope;
+pub(crate) use self::envelope::Envelope;
 pub mod settings;
 pub use self::settings::{EnvelopeMode, EnvelopeState};
 
@@ -29,54 +28,7 @@ impl ModTrigger {
         }
     }
 
-    fn set(&mut self, control: EnvelopeControl, value: f32) {
-        let value = normalized_to_u8(value);
-        match control {
-            EnvelopeControl::AttackDuration => self.settings.attack.duration = value,
-            EnvelopeControl::DecayDuration => self.settings.decay.duration = value,
-            EnvelopeControl::Sustain => self.settings.sustain = value,
-            EnvelopeControl::ReleaseDuration => self.settings.release.duration = value,
-            EnvelopeControl::AttackCurve => self.settings.attack.curve = value,
-            EnvelopeControl::DecayCurve => self.settings.decay.curve = value,
-            EnvelopeControl::ReleaseCurve => self.settings.release.curve = value,
-            EnvelopeControl::Activation => {
-                self.settings.activation = match value {
-                    0 => Activation::NoteOnce,
-                    1 => Activation::NoteLoop,
-                    _ => Activation::FreeLoop,
-                }
-            }
-        }
-        self.push_settings();
-    }
-
-    fn get(&self, control: EnvelopeControl) -> f32 {
-        let value = match control {
-            EnvelopeControl::AttackDuration => self.settings.attack.duration,
-            EnvelopeControl::DecayDuration => self.settings.decay.duration,
-            EnvelopeControl::Sustain => self.settings.sustain,
-            EnvelopeControl::ReleaseDuration => self.settings.release.duration,
-            EnvelopeControl::AttackCurve => self.settings.attack.curve,
-            EnvelopeControl::DecayCurve => self.settings.decay.curve,
-            EnvelopeControl::ReleaseCurve => self.settings.release.curve,
-            EnvelopeControl::Activation => match self.settings.activation {
-                Activation::NoteOnce => 0,
-                Activation::NoteLoop => 1,
-                Activation::FreeLoop => 2,
-            },
-        };
-        value as f32 / 127.0
-    }
-
-    fn push_settings(&mut self) {
-        if let Some(engine) = self.engine.as_mut() {
-            engine.update(self.settings);
-        }
-    }
-}
-
-impl Consumer for ModTrigger {
-    fn consume(&mut self, input: &Input, _out: &mut OutputEvents) -> Routing {
+    fn consume_input(&mut self, input: &Input, _out: &mut OutputEvents) -> Routing {
         match *input {
             Input::Note(NoteTransition { kind: NoteKind::Press, velocity, .. })
                 if velocity > 0 =>
@@ -106,37 +58,11 @@ impl Consumer for ModTrigger {
         }
     }
 
-    fn wants_notes(&self) -> bool {
-        true
-    }
-
-    fn set_control_slot(&mut self, slot: u8, value: f32) {
-        if let Some(control) = Self::control_for_slot(slot) {
-            self.set(control, value);
+    /// Keeps a running engine in sync with edited settings.
+    fn after_control_set(&mut self) {
+        if let Some(engine) = self.engine.as_mut() {
+            engine.update(self.settings);
         }
-    }
-
-    fn control_slot_value(&self, slot: u8) -> Option<f32> {
-        Self::control_for_slot(slot).map(|control| self.get(control))
-    }
-
-    fn mode_count(&self) -> u8 {
-        EnvelopeMode::COUNT
-    }
-
-    fn mode_index(&self) -> u8 {
-        self.settings.mode.index()
-    }
-
-    fn set_mode(&mut self, index: u8) {
-        if index < EnvelopeMode::COUNT {
-            self.settings.mode = EnvelopeMode::from_index(index);
-            self.push_settings();
-        }
-    }
-
-    fn output_slot(&self) -> u8 {
-        self.output_slot
     }
 }
 
@@ -145,11 +71,72 @@ impl Modulation for ModTrigger {
         self.engine.as_mut()?.advance(delta_ms, gated)
     }
 
-    fn reset(&mut self) -> OutputEvents {
-        self.engine.as_mut().map(Modulation::reset).unwrap_or_default()
-    }
 }
 
-pub(crate) fn normalized_to_u8(value: f32) -> u8 {
+fn u8_from_normalized(value: f32) -> u8 {
     libm::roundf(value.clamp(0.0, 1.0) * 127.0) as u8
+}
+
+fn normalized_from_u8(value: u8) -> f32 {
+    value as f32 / 127.0
+}
+
+/// Maps a normalized value onto the three trigger variants.
+///
+/// A discrete control spans the full 0..=1 range so each variant sits at a
+/// round value (0.0, 0.5, 1.0) rather than being squeezed into 7 bits.
+fn trigger_from_normalized(value: f32) -> Trigger {
+    let steps = (Trigger::COUNT - 1) as f32;
+    Trigger::from_index(libm::roundf(value.clamp(0.0, 1.0) * steps) as u8)
+}
+
+fn normalized_from_trigger(trigger: Trigger) -> f32 {
+    trigger.index() as f32 / (Trigger::COUNT - 1) as f32
+}
+
+consumer! {
+    ModTrigger {
+        settings: EnvelopeState,
+        wants_notes: true,
+        output_slot: 0,
+        controls: [
+            0 => ReleaseDuration {
+                set: |s: &mut EnvelopeState, v: f32| s.release.duration = u8_from_normalized(v),
+                get: |s: &EnvelopeState| normalized_from_u8(s.release.duration),
+            },
+            1 => Sustain {
+                set: |s: &mut EnvelopeState, v: f32| s.sustain = u8_from_normalized(v),
+                get: |s: &EnvelopeState| normalized_from_u8(s.sustain),
+            },
+            2 => DecayDuration {
+                set: |s: &mut EnvelopeState, v: f32| s.decay.duration = u8_from_normalized(v),
+                get: |s: &EnvelopeState| normalized_from_u8(s.decay.duration),
+            },
+            3 => AttackDuration {
+                set: |s: &mut EnvelopeState, v: f32| s.attack.duration = u8_from_normalized(v),
+                get: |s: &EnvelopeState| normalized_from_u8(s.attack.duration),
+            },
+            4 => ReleaseCurve {
+                set: |s: &mut EnvelopeState, v: f32| s.release.curve = u8_from_normalized(v),
+                get: |s: &EnvelopeState| normalized_from_u8(s.release.curve),
+            },
+            5 => DecayCurve {
+                set: |s: &mut EnvelopeState, v: f32| s.decay.curve = u8_from_normalized(v),
+                get: |s: &EnvelopeState| normalized_from_u8(s.decay.curve),
+            },
+            6 => AttackCurve {
+                set: |s: &mut EnvelopeState, v: f32| s.attack.curve = u8_from_normalized(v),
+                get: |s: &EnvelopeState| normalized_from_u8(s.attack.curve),
+            },
+            7 => TriggerControl {
+                set: |s: &mut EnvelopeState, v: f32| s.trigger = trigger_from_normalized(v),
+                get: |s: &EnvelopeState| normalized_from_trigger(s.trigger),
+            },
+        ],
+        modes: {
+            count: EnvelopeMode::COUNT,
+            get: |s: &EnvelopeState| s.mode.index(),
+            set: |s: &mut EnvelopeState, index: u8| s.mode = EnvelopeMode::from_index(index),
+        },
+    }
 }

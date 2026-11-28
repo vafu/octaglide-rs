@@ -1,6 +1,6 @@
 use super::{
-    Activation, Consumer, ConsumerKind, Input, Modulation, NoteKind, NoteTransition, Section,
-    Slot, VoiceId, VoiceOutput,
+    Consumer, ConsumerKind, Input, Modulation, NoteKind, NoteTransition, Trigger, VoiceId,
+    VoiceOutput,
 };
 use crate::{
     core::consumers::envelope::calc,
@@ -55,7 +55,7 @@ fn semantic_control_slots_map_to_envelope_controls() {
     envelope.consume(
         &Input::ControlUpdate {
             voice: VoiceId(0),
-            slot: Slot::new(Section::Modulation, 0),
+            slot: 8,
             control: 0,
             value: 1.0,
         },
@@ -104,9 +104,9 @@ fn octave_transforms_note_events_without_midi_channels() {
 fn snapshot_rejects_unknown_voice_and_slot() {
     let (output, _receiver) = voice_outputs();
     let core = super::Core::new(output);
-    assert!(core.snapshot(VoiceId(9), Slot::new(Section::Modulation, 0)).is_none());
-    assert!(core.snapshot(VoiceId(0), Slot::new(Section::Modulation, 9)).is_none());
-    assert!(core.snapshot(VoiceId(0), Slot::new(Section::Modulation, 0)).is_some());
+    assert!(core.snapshot(VoiceId(9), 8).is_none());
+    assert!(core.snapshot(VoiceId(0), 17).is_none());
+    assert!(core.snapshot(VoiceId(0), 8).is_some());
 }
 
 #[test]
@@ -114,16 +114,16 @@ fn addressed_control_reaches_only_its_slot() {
     let (output, _receiver) = voice_outputs();
     let mut core = super::Core::new(output);
     let before = core
-        .snapshot(VoiceId(0), Slot::new(Section::Modulation, 1))
+        .snapshot(VoiceId(0), 9)
         .unwrap();
     block_on(core.process(Input::ControlUpdate {
         voice: VoiceId(0),
-        slot: Slot::new(Section::Voicing, 0),
+        slot: 4,
         control: 0,
         value: 1.0,
     }));
     let after = core
-        .snapshot(VoiceId(0), Slot::new(Section::Modulation, 1))
+        .snapshot(VoiceId(0), 9)
         .unwrap();
     assert_eq!(before, after, "a Voicing control must not touch Modulation");
 }
@@ -133,7 +133,7 @@ fn note_broadcast_reaches_every_slot_that_wants_notes() {
     let (output, _receiver) = voice_outputs();
     let mut core = super::Core::new(output);
     let envelope = core
-        .snapshot(VoiceId(0), Slot::new(Section::Modulation, 0))
+        .snapshot(VoiceId(0), 8)
         .unwrap();
     assert_eq!(envelope.kind, ConsumerKind::ModTrigger);
     // Octave emits a transposed note, proving voicing ran.
@@ -209,7 +209,7 @@ fn short_stage_completes_without_rounding_up() {
 fn free_loop_envelopes_run_without_a_note() {
     let mut envelope = ModTrigger::new(VoiceId(0), 0);
     let settings = super::EnvelopeState {
-        activation: Activation::FreeLoop,
+        trigger: Trigger::FREE_LOOP,
         ..super::EnvelopeState::INITIAL
     };
     // FreeLoop has no note trigger, so construction alone should produce output.
@@ -223,11 +223,11 @@ fn free_loop_envelopes_run_without_a_note() {
 
 #[test]
 fn activation_one_shot_stops_and_loop_wraps() {
-    assert!(!Activation::NoteOnce.loops());
-    assert!(Activation::NoteLoop.loops());
-    assert!(Activation::FreeLoop.loops());
-    assert!(Activation::NoteOnce.note_triggered());
-    assert!(!Activation::FreeLoop.note_triggered());
+    assert!(!Trigger::NOTE_ONCE.loops());
+    assert!(Trigger::NOTE_LOOP.loops());
+    assert!(Trigger::FREE_LOOP.loops());
+    assert!(Trigger::NOTE_ONCE.note_triggered());
+    assert!(!Trigger::FREE_LOOP.note_triggered());
 }
 
 #[test]
@@ -242,7 +242,7 @@ fn settings_change_preserves_position() {
     envelope.consume(
         &Input::ControlUpdate {
             voice: VoiceId(0),
-            slot: Slot::new(Section::Modulation, 0),
+            slot: 8,
             control: 3,
             value: 1.0,
         },
@@ -290,4 +290,78 @@ fn releasing_the_last_note_zeroes_the_pitch_bend() {
         out.iter().any(|msg| matches!(msg, VoiceOutput::PitchBend { amount, .. } if *amount == 0.0)),
         "expected a zero pitch bend, got {out:?}"
     );
+}
+
+#[test]
+fn control_map_round_trips_every_declared_slot() {
+    let mut octave = super::consumers::Octave::new(VoiceId(0));
+    // Slot 0 is declared (Shift); slot 1 is padding.
+    assert!(octave.control_slot_value(0).is_some());
+    assert!(octave.control_slot_value(1).is_none());
+    assert!(octave.control_slot_value(7).is_none());
+
+    // Set and read back through the macro-generated parse/format pair.
+    octave.set_control_slot(0, 1.0);
+    assert_eq!(octave.control_slot_value(0), Some(1.0));
+    octave.set_control_slot(0, 0.0);
+    assert_eq!(octave.control_slot_value(0), Some(0.0));
+
+    let envelope = super::consumers::ModTrigger::new(VoiceId(0), 0);
+    for slot in 0..8 {
+        assert!(
+            envelope.control_slot_value(slot).is_some(),
+            "envelope declares all 8 control slots"
+        );
+    }
+}
+
+#[test]
+fn every_declared_control_round_trips() {
+    let mut envelope = super::consumers::ModTrigger::new(VoiceId(0), 0);
+    // Slots 0..=6 are continuous settings.
+    for slot in 0..7 {
+        envelope.set_control_slot(slot, 0.25);
+        let read = envelope.control_slot_value(slot).unwrap();
+        assert!(
+            (read - 0.25).abs() < 0.02,
+            "slot {slot} round-tripped to {read}"
+        );
+    }
+    // Slot 7 is the discrete trigger; each variant sits at an exact point.
+    for (value, expected) in [
+        (0.0, Trigger::NOTE_ONCE),
+        (0.5, Trigger::NOTE_LOOP),
+        (1.0, Trigger::FREE_LOOP),
+    ] {
+        envelope.set_control_slot(7, value);
+        assert_eq!(envelope.control_slot_value(7), Some(value));
+        assert_eq!(
+            super::Trigger::from_index(libm::roundf(value * 2.0) as u8),
+            expected
+        );
+    }
+
+    let mut glider = super::consumers::Glider::new(VoiceId(0));
+    for slot in 0..4 {
+        glider.set_control_slot(slot, 0.5);
+        assert!(glider.control_slot_value(slot).is_some());
+    }
+    assert!(glider.control_slot_value(4).is_none(), "slot 4 is padding");
+}
+
+#[test]
+fn trigger_fields_agree_with_helpers() {
+    for trigger in [Trigger::NOTE_ONCE, Trigger::NOTE_LOOP, Trigger::FREE_LOOP] {
+        let (note_trigger, looping) = match trigger {
+            Trigger::NoteOnce { note_trigger, looping }
+            | Trigger::NoteLoop { note_trigger, looping }
+            | Trigger::FreeLoop { note_trigger, looping } => (note_trigger, looping),
+        };
+        assert_eq!(trigger.note_triggered(), note_trigger);
+        assert_eq!(trigger.loops(), looping);
+        assert_eq!(Trigger::from_index(trigger.index()), trigger);
+    }
+    assert!(!Trigger::NOTE_ONCE.loops());
+    assert!(Trigger::NOTE_LOOP.loops());
+    assert!(!Trigger::FREE_LOOP.note_triggered());
 }
