@@ -72,11 +72,11 @@ fn envelope_snapshot() -> DisplaySnapshot {
         model: Some(UiModel::ModTrigger(ModTriggerUi {
             name: "Envelope",
             output_cc: 2,
-            envelope: crate::core::EnvelopeState {
-                attack: crate::core::EnvelopeStageState { duration: 20, curve: 64 },
-                decay: crate::core::EnvelopeStageState { duration: 30, curve: 64 },
+            envelope: crate::core::EnvelopeParams {
+                attack: crate::core::EnvelopeStageParams { duration: 20, curve: 64 },
+                decay: crate::core::EnvelopeStageParams { duration: 30, curve: 64 },
                 sustain: 90,
-                release: crate::core::EnvelopeStageState { duration: 40, curve: 64 },
+                release: crate::core::EnvelopeStageParams { duration: 40, curve: 64 },
                 mode: crate::core::EnvelopeMode::Adsr,
                 trigger: crate::core::Trigger::NOTE_ONCE,
             },

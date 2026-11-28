@@ -1,9 +1,9 @@
-//! Envelope settings owned by the envelope consumer.
+//! Envelope parameters owned by the envelope consumer.
 
 use crate::core::Trigger;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct EnvelopeStageState {
+pub struct EnvelopeStageParams {
     pub duration: u8,
     pub curve: u8,
 }
@@ -37,26 +37,26 @@ impl EnvelopeMode {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct EnvelopeState {
-    pub attack: EnvelopeStageState,
-    pub decay: EnvelopeStageState,
-    pub release: EnvelopeStageState,
+pub struct EnvelopeParams {
+    pub attack: EnvelopeStageParams,
+    pub decay: EnvelopeStageParams,
+    pub release: EnvelopeStageParams,
     pub sustain: u8,
     pub mode: EnvelopeMode,
     pub trigger: Trigger,
 }
 
-impl EnvelopeState {
+impl EnvelopeParams {
     pub const INITIAL: Self = Self {
-        attack: EnvelopeStageState {
+        attack: EnvelopeStageParams {
             duration: 20,
             curve: 64,
         },
-        decay: EnvelopeStageState {
+        decay: EnvelopeStageParams {
             duration: 20,
             curve: 64,
         },
-        release: EnvelopeStageState {
+        release: EnvelopeStageParams {
             duration: 20,
             curve: 64,
         },

@@ -17,8 +17,8 @@ pub use self::consumers::{
     Consumer, ConsumerKind, Routing, SlotConsumer, CONTROL_SLOTS,
 };
 pub use self::modulator::{Modulation, Trigger};
-pub use self::consumers::envelope::settings::{
-    EnvelopeMode, EnvelopeStageState, EnvelopeState,
+pub use self::consumers::envelope::params::{
+    EnvelopeMode, EnvelopeParams, EnvelopeStageParams,
 };
 pub use self::notes::{HeldNotes, NoteKind, NoteTransition};
 

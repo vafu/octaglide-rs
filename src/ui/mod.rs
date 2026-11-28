@@ -36,7 +36,7 @@ pub struct ModTriggerUi {
     pub name: &'static str,
     pub output_cc: u8,
     /// The same settings the engine plays, so the plot cannot drift.
-    pub envelope: crate::core::EnvelopeState,
+    pub envelope: crate::core::EnvelopeParams,
 }
 
 /// The consumer model the display renders.

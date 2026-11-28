@@ -11,7 +11,6 @@ pub mod envelope;
 pub(crate) mod glide;
 mod noop;
 mod octave;
-pub(crate) mod macros;
 
 pub use self::envelope::ModTrigger;
 pub use self::glide::Glider;
@@ -42,8 +41,6 @@ pub trait Consumer {
     fn wants_notes(&self) -> bool {
         false
     }
-
-    fn set_control_slot(&mut self, _slot: u8, _value: f32) {}
 
     fn control_slot_value(&self, _slot: u8) -> Option<f32> {
         None

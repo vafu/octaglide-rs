@@ -87,7 +87,7 @@ fn out_of_range_mode_index_is_ignored() {
 #[test]
 fn octave_transforms_note_events_without_midi_channels() {
     let mut octave = Octave::new(VoiceId(0));
-    octave.set_control_slot(0, 1.0);
+    octave.set_control(0, 1.0);
     let mut out = super::OutputEvents::new();
     octave.consume(&press(VoiceId(0), 60), &mut out);
     assert_eq!(
@@ -146,8 +146,8 @@ fn envelope_hold_freezes_until_release() {
     let mut envelope = ModTrigger::new(VoiceId(0), 0);
     // AR: attack -> hold -> release. Make every stage short (1 unit = 16 ms).
     envelope.set_mode(super::consumers::envelope::EnvelopeMode::Ar.index());
-    envelope.set_control_slot(3, 1.0 / 127.0); // attack duration
-    envelope.set_control_slot(0, 1.0 / 127.0); // release duration
+    envelope.set_control(3, 1.0 / 127.0); // attack duration
+    envelope.set_control(0, 1.0 / 127.0); // release duration
     let mut out = super::OutputEvents::new();
     envelope.consume(&press(VoiceId(0), 60), &mut out);
 
@@ -186,7 +186,7 @@ fn envelope_hold_freezes_until_release() {
 fn short_stage_completes_without_rounding_up() {
     let mut envelope = ModTrigger::new(VoiceId(0), 0);
     // 1 unit = 16 ms; a 5 ms tick must not stretch it to 20 ms.
-    envelope.set_control_slot(3, 1.0 / 127.0);
+    envelope.set_control(3, 1.0 / 127.0);
     let mut out = super::OutputEvents::new();
     envelope.consume(&press(VoiceId(0), 60), &mut out);
 
@@ -208,13 +208,15 @@ fn short_stage_completes_without_rounding_up() {
 #[test]
 fn free_loop_envelopes_run_without_a_note() {
     let mut envelope = ModTrigger::new(VoiceId(0), 0);
-    let settings = super::EnvelopeState {
+    let settings = super::EnvelopeParams {
         trigger: Trigger::FREE_LOOP,
-        ..super::EnvelopeState::INITIAL
+        ..super::EnvelopeParams::INITIAL
     };
     // FreeLoop has no note trigger, so construction alone should produce output.
-    let mut engine = super::consumers::envelope::Envelope::new(VoiceId(0), 0, settings);
-    let messages = engine.advance(5, false);
+    let mut envelope = ModTrigger::new(VoiceId(0), 0);
+    envelope.set_control(7, 1.0);
+    let _ = settings;
+    let messages = envelope.advance(5, false);
     assert!(
         messages.is_some_and(|messages| !messages.is_empty()),
         "a free-running envelope advances without a note"
@@ -301,9 +303,9 @@ fn control_map_round_trips_every_declared_slot() {
     assert!(octave.control_slot_value(7).is_none());
 
     // Set and read back through the macro-generated parse/format pair.
-    octave.set_control_slot(0, 1.0);
+    octave.set_control(0, 1.0);
     assert_eq!(octave.control_slot_value(0), Some(1.0));
-    octave.set_control_slot(0, 0.0);
+    octave.set_control(0, 0.0);
     assert_eq!(octave.control_slot_value(0), Some(0.0));
 
     let envelope = super::consumers::ModTrigger::new(VoiceId(0), 0);
@@ -320,7 +322,7 @@ fn every_declared_control_round_trips() {
     let mut envelope = super::consumers::ModTrigger::new(VoiceId(0), 0);
     // Slots 0..=6 are continuous settings.
     for slot in 0..7 {
-        envelope.set_control_slot(slot, 0.25);
+        envelope.set_control(slot, 0.25);
         let read = envelope.control_slot_value(slot).unwrap();
         assert!(
             (read - 0.25).abs() < 0.02,
@@ -333,7 +335,7 @@ fn every_declared_control_round_trips() {
         (0.5, Trigger::NOTE_LOOP),
         (1.0, Trigger::FREE_LOOP),
     ] {
-        envelope.set_control_slot(7, value);
+        envelope.set_control(7, value);
         assert_eq!(envelope.control_slot_value(7), Some(value));
         assert_eq!(
             super::Trigger::from_index(libm::roundf(value * 2.0) as u8),
@@ -343,7 +345,7 @@ fn every_declared_control_round_trips() {
 
     let mut glider = super::consumers::Glider::new(VoiceId(0));
     for slot in 0..4 {
-        glider.set_control_slot(slot, 0.5);
+        glider.set_control(slot, 0.5);
         assert!(glider.control_slot_value(slot).is_some());
     }
     assert!(glider.control_slot_value(4).is_none(), "slot 4 is padding");

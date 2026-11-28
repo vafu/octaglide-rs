@@ -120,9 +120,9 @@ const PIXEL_UNITS: f32 = TIME_SPAN_UNITS / LAST_PIXEL as f32;
 
 /// Samples the envelope preview at horizontal pixel `x`.
 ///
-/// Reads the same `EnvelopeState` the engine plays, so the plot cannot drift
+/// Reads the same `EnvelopeParams` the engine plays, so the plot cannot drift
 /// from playback.
-pub fn preview_level(envelope: &crate::core::EnvelopeState, x: u32) -> f32 {
+pub fn preview_level(envelope: &crate::core::EnvelopeParams, x: u32) -> f32 {
     let time = x.min(LAST_PIXEL) as f32 * TIME_SPAN_UNITS / LAST_PIXEL as f32;
     let sustain = envelope.sustain as f32 / 127.0;
     let attack = visible_duration(&envelope.attack);
@@ -152,7 +152,7 @@ pub fn preview_level(envelope: &crate::core::EnvelopeState, x: u32) -> f32 {
     }
 }
 
-fn ramp(time: f32, stage: &crate::core::EnvelopeStageState, from: f32, to: f32) -> f32 {
+fn ramp(time: f32, stage: &crate::core::EnvelopeStageParams, from: f32, to: f32) -> f32 {
     let duration = visible_duration(stage);
     if time < duration {
         envelope_level(time / duration, stage.curve, from, to)
@@ -161,7 +161,7 @@ fn ramp(time: f32, stage: &crate::core::EnvelopeStageState, from: f32, to: f32) 
     }
 }
 
-fn visible_duration(stage: &crate::core::EnvelopeStageState) -> f32 {
+fn visible_duration(stage: &crate::core::EnvelopeStageParams) -> f32 {
     if stage.duration == 0 {
         0.0
     } else {

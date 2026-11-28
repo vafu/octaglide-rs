@@ -1,9 +1,9 @@
-//! Glide settings owned by the glide consumer.
+//! Glide parameters owned by the glide consumer.
 
 use crate::core::Trigger;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
-pub struct GlideState {
+pub struct GlideParams {
     pub enabled: bool,
     pub duration_ms: u32,
     pub bend_range_semitones: f32,
@@ -11,7 +11,7 @@ pub struct GlideState {
     pub trigger: Trigger,
 }
 
-impl GlideState {
+impl GlideParams {
     pub const INITIAL: Self = Self {
         enabled: true,
         duration_ms: 200,
